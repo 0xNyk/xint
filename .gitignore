@@ -1,0 +1,26 @@
+# Secrets
+.env
+
+# OAuth tokens (sensitive)
+data/oauth-tokens.json
+data/oauth-tokens.json.tmp
+
+# Cache (auto-generated)
+data/cache/*.json
+
+# Personal data
+data/watchlist.json
+data/api-costs.json
+data/exports/*.md
+data/exports/*.json
+
+# Dependencies
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
