@@ -176,6 +176,36 @@ bun run xint.ts search "AI agents" --json | bun run xint.ts analyze --pipe "Whic
 bun run xint.ts analyze --model grok-3 "Deep analysis of crypto market sentiment"
 ```
 
+## xAI X Search (No Cookies/GraphQL)
+
+For “recent sentiment / what X is saying” without using cookies/GraphQL, use xAI’s hosted `x_search` tool.
+
+Script:
+
+```bash
+python3 /home/openclaw/.openclaw/skills/xint/scripts/xai_x_search_scan.py --help
+```
+
+Jarv cron uses it with query packs in `workspace-jarv/x-signals/x-search-queries.json`.
+
+## xAI Collections Knowledge Base (Files + Collections)
+
+Store first-party artifacts (reports, logs) in xAI Collections and semantic-search them later.
+
+Script:
+
+```bash
+python3 /home/openclaw/.openclaw/skills/xint/scripts/xai_collections.py --help
+```
+
+Env:
+- `XAI_API_KEY` (api.x.ai): file upload + search
+- `XAI_MANAGEMENT_API_KEY` (management-api.x.ai): collections management + attaching documents
+
+Notes:
+- Never print keys.
+- Prefer `--dry-run` when wiring new cron jobs.
+
 ### Watch (Real-Time Monitoring)
 
 ```bash
