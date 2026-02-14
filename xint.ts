@@ -62,6 +62,10 @@ import { cmdLikes, cmdLike, cmdUnlike, cmdFollowing, cmdBookmarkSave, cmdUnbookm
 import { cmdTrends } from "./lib/trends";
 import { cmdAnalyze } from "./lib/grok";
 import { cmdCosts, trackCost, checkBudget } from "./lib/costs";
+import { cmdWatch } from "./lib/watch";
+import { cmdDiff } from "./lib/followers";
+import { analyzeSentiment, enrichTweets, computeStats, formatSentimentTweet, formatStats } from "./lib/sentiment";
+import { cmdReport } from "./lib/report";
 
 const SKILL_DIR = import.meta.dir;
 const WATCHLIST_PATH = join(SKILL_DIR, "data", "watchlist.json");
@@ -140,6 +144,9 @@ async function cmdSearch() {
   const save = getFlag("save");
   const asJson = getFlag("json");
   const asMarkdown = getFlag("markdown");
+  const asCsv = getFlag("csv");
+  const asJsonl = getFlag("jsonl");
+  const withSentiment = getFlag("sentiment");
 
   // Quick mode overrides
   if (quick) {
@@ -223,14 +230,38 @@ async function cmdSearch() {
 
   tweets = api.dedupe(tweets);
 
+  // Sentiment analysis (optional, runs before output)
+  let sentimentResults: Awaited<ReturnType<typeof analyzeSentiment>> | null = null;
+  if (withSentiment) {
+    console.error(`Running sentiment analysis on ${Math.min(tweets.length, limit)} tweets...`);
+    sentimentResults = await analyzeSentiment(tweets.slice(0, limit));
+  }
+
   // Output
-  if (asJson) {
-    console.log(JSON.stringify(tweets.slice(0, limit), null, 2));
+  if (asCsv) {
+    console.log(fmt.formatCsv(tweets.slice(0, limit)));
+  } else if (asJsonl) {
+    console.log(fmt.formatJsonl(tweets.slice(0, limit)));
+  } else if (asJson) {
+    if (sentimentResults) {
+      const enriched = enrichTweets(tweets.slice(0, limit), sentimentResults);
+      console.log(JSON.stringify(enriched, null, 2));
+    } else {
+      console.log(JSON.stringify(tweets.slice(0, limit), null, 2));
+    }
   } else if (asMarkdown) {
     const md = fmt.formatResearchMarkdown(query, tweets, {
       queries: [query],
     });
     console.log(md);
+  } else if (sentimentResults) {
+    const enriched = enrichTweets(tweets.slice(0, limit), sentimentResults);
+    for (const [i, t] of enriched.entries()) {
+      console.log(formatSentimentTweet(t, i));
+      console.log();
+    }
+    const stats = computeStats(sentimentResults);
+    console.log(formatStats(stats, sentimentResults.length));
   } else {
     console.log(fmt.formatResultsTelegram(tweets, { query, limit }));
   }
@@ -473,6 +504,9 @@ function usage() {
 
 Commands:
   search <query> [options]    Search tweets (recent or full archive)
+  watch <query> [options]     Monitor X in real-time (polls on interval)
+  diff <@user> [options]      Track follower/following changes over time
+  report <topic> [options]    Generate intelligence report with AI analysis
   thread <tweet_id>           Fetch full conversation thread
   profile <username>          Recent tweets from a user
   tweet <tweet_id>            Fetch a single tweet
@@ -508,10 +542,34 @@ Search options:
                              filter, 1hr cache TTL, cost summary
   --from <username>          Shorthand for from:username in query
   --quality                  Pre-filter low-engagement tweets (min_faves:10)
+  --sentiment                AI sentiment analysis via Grok (per-tweet scores)
   --no-replies               Exclude replies
   --save                     Save to data/exports/
   --json                     Raw JSON output
+  --jsonl                    JSONL output (one tweet per line, pipeable)
+  --csv                      CSV output (spreadsheet-friendly)
   --markdown                 Markdown output
+
+Watch options:
+  --interval, -i <dur>       Polling interval: 30s, 5m, 1h (default: 5m)
+  --webhook <url>            POST new tweets to this URL as JSON
+  --limit <N>                Max tweets per poll (default: 10)
+  --since <dur>              Initial seed window (default: 1h)
+  --quiet, -q                Suppress per-poll headers
+  --jsonl                    Output JSONL for piping
+
+Diff options:
+  --following                Track following list instead of followers
+  --history                  Show all saved snapshots
+  --pages <N>                Max pages to fetch (default: 5, ~5000 users)
+  --json                     Output as JSON
+
+Report options:
+  --accounts, -a <list>      Comma-separated accounts (e.g., @user1,@user2)
+  --sentiment, -s            Include sentiment analysis
+  --model <name>             Grok model (default: grok-3-mini)
+  --pages <N>                Search pages (default: 2)
+  --save                     Save report to data/exports/
 
 Bookmark/Like options:
   --limit N                  Max to display (default: 20)
@@ -607,6 +665,17 @@ async function main() {
       break;
     case "cache":
       await cmdCache();
+      break;
+    case "watch":
+    case "w":
+      await cmdWatch(args.slice(1));
+      break;
+    case "diff":
+    case "followers":
+      await cmdDiff(args.slice(1));
+      break;
+    case "report":
+      await cmdReport(args.slice(1));
       break;
     default:
       usage();

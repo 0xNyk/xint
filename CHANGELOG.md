@@ -1,5 +1,26 @@
 # Changelog
 
+## v3.1.0 (2026-02-15) — Agent Intelligence Update
+
+Major feature release focused on real-time intelligence, social graph tracking, AI-powered sentiment, and structured export formats. Designed to make xint the most capable X intelligence skill for AI agents.
+
+### Added
+- **`watch` command** — Real-time monitoring. Polls a search query on interval, shows only new tweets. Supports webhook POST (Slack, Discord, etc.), JSONL output for piping, graceful shutdown with session stats. Auto-handles rate limits.
+- **`diff` command** — Follower/following tracking with local snapshots. Shows who followed/unfollowed since last check. Supports `--following` for tracking who you follow, `--history` to view all snapshots, `--json` for structured output.
+- **`report` command** — Automated intelligence reports combining search + Grok AI analysis + optional sentiment. Generates markdown with executive summary, top tweets, per-account activity, and metadata. `--save` writes to `data/exports/`.
+- **`--sentiment` flag** — AI-powered per-tweet sentiment analysis on search results via Grok. Shows positive/negative/neutral/mixed with scores (-1.0 to 1.0) and aggregate stats. Uses batched Grok calls with structured JSON parsing.
+- **`--csv` flag** — CSV output for spreadsheet analysis. Proper escaping, header row, all tweet fields.
+- **`--jsonl` flag** — One JSON object per line. Optimized for Unix pipelines: `xint search "topic" --jsonl | jq 'select(.metrics.likes > 100)'`
+- **`data/snapshots/` directory** — Local storage for follower/following snapshots used by `diff` command.
+
+### Changed
+- **README rewritten** — Hero image, agent-first positioning, feature table, all new commands documented, "Use as an AI Agent Skill" section expanded.
+- **Commands table expanded** — 25 commands total (was 21), with shortcuts for `watch` (`w`), `diff` (also `followers`).
+- **Usage text updated** — All new commands and flags documented in `--help`.
+- **Cost tracking** — Added `followers` and `following_list` cost rates.
+
+---
+
 ## v3.0.0 (2026-02-15) — xint
 
 **Rebranded as xint (X Intelligence).** Open-sourced under MIT license at [github.com/0xNyk/xint](https://github.com/0xNyk/xint).

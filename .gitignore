@@ -13,6 +13,7 @@ data/watchlist.json
 data/api-costs.json
 data/exports/*.md
 data/exports/*.json
+data/snapshots/*.json
 
 # Dependencies
 node_modules/

@@ -155,3 +155,52 @@ export function formatProfileTelegram(user: any, tweets: Tweet[]): string {
 
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// CSV output
+// ---------------------------------------------------------------------------
+
+function csvEscape(s: string): string {
+  if (s.includes(",") || s.includes('"') || s.includes("\n")) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+}
+
+/**
+ * Format tweets as CSV with header row.
+ */
+export function formatCsv(tweets: Tweet[]): string {
+  const header = "id,username,name,text,likes,retweets,replies,impressions,bookmarks,created_at,url,hashtags,mentions";
+  const rows = tweets.map(t => {
+    const cleanText = t.text.replace(/https:\/\/t\.co\/\S+/g, "").trim();
+    return [
+      t.id,
+      csvEscape(t.username),
+      csvEscape(t.name),
+      csvEscape(cleanText),
+      t.metrics.likes,
+      t.metrics.retweets,
+      t.metrics.replies,
+      t.metrics.impressions,
+      t.metrics.bookmarks,
+      t.created_at,
+      t.tweet_url,
+      csvEscape(t.hashtags.join(";")),
+      csvEscape(t.mentions.join(";")),
+    ].join(",");
+  });
+  return [header, ...rows].join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// JSONL output (one JSON object per line)
+// ---------------------------------------------------------------------------
+
+/**
+ * Format tweets as JSONL — one JSON object per line.
+ * Optimized for piping into jq, awk, or other line-oriented tools.
+ */
+export function formatJsonl(tweets: Tweet[]): string {
+  return tweets.map(t => JSON.stringify(t)).join("\n");
+}

@@ -7,8 +7,10 @@ description: >
   (2) user is working on something where recent X discourse would provide
   useful context (new library releases, API changes, product launches, cultural events,
   industry drama), (3) user wants to find what devs/experts/community thinks about a topic.
-  Also supports: likes, following, bookmarks (read/write), trending topics, Grok AI analysis,
-  and cost tracking. Requires OAuth for user-context operations.
+  Also supports: real-time monitoring (watch), follower tracking (diff), intelligence reports,
+  AI sentiment analysis, likes, following, bookmarks (read/write), trending topics, Grok AI analysis,
+  and cost tracking. Export as JSON, JSONL (pipeable), CSV, or Markdown.
+  Requires OAuth for user-context operations.
 ---
 
 # xint — X Intelligence CLI
@@ -43,8 +45,11 @@ bun run xint.ts search "<query>" [options]
 - `--from <username>` — shorthand for `from:username` in query
 - `--quality` — filter low-engagement tweets (>=10 likes, post-hoc)
 - `--no-replies` — exclude replies
+- `--sentiment` — AI-powered per-tweet sentiment analysis (via Grok). Shows positive/negative/neutral/mixed with scores.
 - `--save` — save results to `data/exports/`
 - `--json` — raw JSON output
+- `--jsonl` — one JSON object per line (optimized for Unix pipes: `| jq`, `| tee`)
+- `--csv` — CSV output for spreadsheet analysis
 - `--markdown` — markdown output for research docs
 
 Auto-adds `-is:retweet` unless query already includes it. All searches display estimated API cost.
@@ -57,6 +62,9 @@ bun run xint.ts search "(opus 4.6 OR claude) trading" --pages 2 --save
 bun run xint.ts search "$BTC (revenue OR fees)" --min-likes 5
 bun run xint.ts search "AI agents" --quick
 bun run xint.ts search "AI agents" --quality --quick
+bun run xint.ts search "solana memecoins" --sentiment --limit 20
+bun run xint.ts search "startup funding" --csv > funding.csv
+bun run xint.ts search "AI" --jsonl | jq 'select(.metrics.likes > 100)'
 ```
 
 ### Profile
@@ -167,6 +175,84 @@ bun run xint.ts analyze "What are the top AI agent frameworks right now?"
 bun run xint.ts search "AI agents" --json | bun run xint.ts analyze --pipe "Which show product launches?"
 bun run xint.ts analyze --model grok-3 "Deep analysis of crypto market sentiment"
 ```
+
+### Watch (Real-Time Monitoring)
+
+```bash
+bun run xint.ts watch "<query>" [options]
+```
+
+Polls a search query on an interval, shows only new tweets. Great for monitoring topics during catalysts, tracking mentions, or feeding live data into downstream tools.
+
+**Options:**
+- `--interval <dur>` / `-i` — poll interval: `30s`, `1m`, `5m`, `15m` (default: 5m)
+- `--webhook <url>` — POST new tweets as JSON to this URL (Slack, Discord, n8n, etc.)
+- `--jsonl` — output as JSONL instead of formatted text (for piping to `tee`, `jq`, etc.)
+- `--quiet` — suppress per-poll headers (just show tweets)
+- `--limit N` — max tweets to show per poll
+- `--sort likes|impressions|retweets|recent` — sort order
+
+Press `Ctrl+C` to stop — prints session stats (duration, total polls, new tweets found, total cost).
+
+**Examples:**
+```bash
+bun run xint.ts watch "solana memecoins" --interval 5m
+bun run xint.ts watch "@vitalikbuterin" --interval 1m
+bun run xint.ts watch "AI agents" -i 30s --webhook https://hooks.slack.com/...
+bun run xint.ts watch "breaking news" --jsonl | tee -a feed.jsonl
+```
+
+**Agent usage:** Use `watch` when you need continuous monitoring of a topic. For one-off checks, use `search` instead. The watch command auto-stops if the daily budget is exceeded.
+
+### Diff (Follower Tracking)
+
+```bash
+bun run xint.ts diff <@username> [options]
+```
+
+Tracks follower/following changes over time using local snapshots. First run creates a baseline; subsequent runs show who followed/unfollowed since last check.
+
+**Options:**
+- `--following` — track who the user follows (instead of their followers)
+- `--history` — view all saved snapshots for this user
+- `--json` — structured JSON output
+- `--pages N` — pages of followers to fetch (default: 5, 1000 per page)
+
+Requires OAuth (`auth setup` first). Snapshots stored in `data/snapshots/`.
+
+**Examples:**
+```bash
+bun run xint.ts diff @vitalikbuterin          # First run: create snapshot
+bun run xint.ts diff @vitalikbuterin          # Later: show changes
+bun run xint.ts diff @0xNyk --following       # Track who you follow
+bun run xint.ts diff @solana --history        # View snapshot history
+```
+
+**Agent usage:** Use `diff` to detect notable follower changes for monitored accounts. Combine with `watch` for comprehensive account monitoring. Run periodically (e.g., daily) to build a history of follower changes.
+
+### Report (Intelligence Reports)
+
+```bash
+bun run xint.ts report "<topic>" [options]
+```
+
+Generates comprehensive markdown intelligence reports combining search results, optional sentiment analysis, and AI-powered summary via Grok.
+
+**Options:**
+- `--sentiment` — include per-tweet sentiment analysis
+- `--accounts @user1,@user2` — include per-account activity sections
+- `--model <name>` — Grok model for AI summary (default: grok-3-mini)
+- `--pages N` — search pages to fetch (default: 2)
+- `--save` — save report to `data/exports/`
+
+**Examples:**
+```bash
+bun run xint.ts report "AI agents"
+bun run xint.ts report "solana" --sentiment --accounts @aaboronkov,@rajgokal --save
+bun run xint.ts report "crypto market" --model grok-3 --sentiment --save
+```
+
+**Agent usage:** Use `report` when the user wants a comprehensive briefing on a topic. This is the highest-level command — it runs search, sentiment, and analysis in one pass and produces a structured markdown report. For quick pulse checks, use `search --quick` instead.
 
 ### Costs
 
@@ -282,7 +368,9 @@ All API calls are tracked in `data/api-costs.json`. The budget system warns when
 - Full-archive search: ~$0.01/tweet
 - Write operations (like, unlike, bookmark, unbookmark): ~$0.01/action
 - Profile lookups: ~$0.005/lookup
+- Follower/following lookups: ~$0.01/page
 - Trends: ~$0.10/request
+- Grok AI (sentiment/analyze/report): billed by xAI separately (not X API)
 
 Default daily budget: $1.00 (adjustable via `costs budget set <N>`).
 
@@ -298,7 +386,7 @@ Default daily budget: $1.00 (adjustable via `costs budget set <N>`).
 
 ```
 xint/
-├── SKILL.md           (this file)
+├── SKILL.md           (this file — agent instructions)
 ├── xint.ts            (CLI entry point)
 ├── lib/
 │   ├── api.ts         (X API wrapper: search, thread, profile, tweet)
@@ -306,15 +394,20 @@ xint/
 │   ├── cache.ts       (file-based cache, 15min TTL)
 │   ├── costs.ts       (API cost tracking & budget)
 │   ├── engagement.ts  (likes, like/unlike, following, bookmark write — OAuth)
-│   ├── format.ts      (terminal + markdown formatters)
+│   ├── followers.ts   (follower/following tracking + snapshot diffs)
+│   ├── format.ts      (terminal, markdown, CSV, JSONL formatters)
 │   ├── grok.ts        (xAI Grok analysis integration)
 │   ├── oauth.ts       (OAuth 2.0 PKCE auth + token refresh)
-│   └── trends.ts      (trending topics — API + search fallback)
+│   ├── report.ts      (intelligence report generation)
+│   ├── sentiment.ts   (AI-powered sentiment analysis via Grok)
+│   ├── trends.ts      (trending topics — API + search fallback)
+│   └── watch.ts       (real-time monitoring with polling)
 ├── data/
 │   ├── api-costs.json  (cost tracking data)
 │   ├── oauth-tokens.json (OAuth tokens — chmod 600)
 │   ├── watchlist.json  (accounts to monitor)
 │   ├── exports/        (saved research)
+│   ├── snapshots/      (follower/following snapshots for diff)
 │   └── cache/          (auto-managed)
 └── references/
     └── x-api.md        (X API endpoint reference)

@@ -71,6 +71,8 @@ export const COST_RATES: Record<string, { per_tweet: number; per_call: number }>
   tweet:           { per_tweet: 0.005, per_call: 0 },
   trends:          { per_tweet: 0, per_call: 0.10 },
   thread:          { per_tweet: 0.005, per_call: 0 },
+  followers:       { per_tweet: 0, per_call: 0.01 },  // per user returned
+  following_list:  { per_tweet: 0, per_call: 0.01 },
 };
 
 const DEFAULT_BUDGET: BudgetConfig = {
