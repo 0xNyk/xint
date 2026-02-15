@@ -11,6 +11,19 @@ description: >
   AI sentiment analysis, likes, following, bookmarks (read/write), trending topics, Grok AI analysis,
   and cost tracking. Export as JSON, JSONL (pipeable), CSV, or Markdown.
   Requires OAuth for user-context operations.
+credentials:
+  - name: X_BEARER_TOKEN
+    description: X API v2 bearer token for search, profile, thread, tweet, trends
+    required: true
+  - name: XAI_API_KEY
+    description: xAI API key for Grok analysis, article fetching, sentiment, x-search, collections
+    required: false
+  - name: XAI_MANAGEMENT_API_KEY
+    description: xAI Management API key for collections management
+    required: false
+  - name: X_CLIENT_ID
+    description: X OAuth 2.0 client ID for user-context operations (bookmarks, likes, following, diff)
+    required: false
 ---
 
 # xint — X Intelligence CLI
