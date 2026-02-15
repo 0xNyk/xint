@@ -454,7 +454,7 @@ xint/
 ├── xint.ts            (CLI entry point)
 ├── lib/
 │   ├── api.ts         (X API wrapper: search, thread, profile, tweet)
-│   ├── article.ts     (full article content fetcher via @extractus/article-extractor)
+│   ├── article.ts     (full article content fetcher via xAI web_search)
 │   ├── bookmarks.ts   (bookmark read — OAuth)
 │   ├── cache.ts       (file-based cache, 15min TTL)
 │   ├── costs.ts       (API cost tracking & budget)
