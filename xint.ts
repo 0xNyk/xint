@@ -7,6 +7,7 @@
  *   thread <tweet_id>           Fetch full conversation thread
  *   profile <username>          Recent tweets from a user
  *   tweet <tweet_id>            Fetch a single tweet
+ *   article <url>               Fetch and read full article content
  *   watchlist                   Show watchlist
  *   watchlist add <user>        Add user to watchlist
  *   watchlist remove <user>     Remove user from watchlist
@@ -66,6 +67,7 @@ import { cmdWatch } from "./lib/watch";
 import { cmdDiff } from "./lib/followers";
 import { analyzeSentiment, enrichTweets, computeStats, formatSentimentTweet, formatStats } from "./lib/sentiment";
 import { cmdReport } from "./lib/report";
+import { fetchArticle, formatArticle } from "./lib/article";
 
 const SKILL_DIR = import.meta.dir;
 const WATCHLIST_PATH = join(SKILL_DIR, "data", "watchlist.json");
@@ -476,6 +478,31 @@ async function cmdCache() {
   }
 }
 
+async function cmdArticle() {
+  const url = args[1];
+  if (!url) {
+    console.error("Usage: xint article <url> [--json] [--full] [--model <name>]");
+    process.exit(1);
+  }
+
+  const asJson = getFlag("json");
+  const full = getFlag("full");
+  const model = getOpt("model");
+
+  try {
+    const article = await fetchArticle(url, { full, model });
+
+    if (asJson) {
+      console.log(JSON.stringify(article, null, 2));
+    } else {
+      console.log(formatArticle(article));
+    }
+  } catch (e: any) {
+    console.error(`Error: ${e.message}`);
+    process.exit(1);
+  }
+}
+
 async function cmdAuth() {
   const sub = args[1];
 
@@ -510,6 +537,7 @@ Commands:
   thread <tweet_id>           Fetch full conversation thread
   profile <username>          Recent tweets from a user
   tweet <tweet_id>            Fetch a single tweet
+  article <url>               Fetch and read full article content
   bookmarks [options]         Fetch your bookmarked tweets (OAuth required)
   likes [options]             Fetch your liked tweets (OAuth required)
   like <tweet_id>             Like a tweet (OAuth required)
@@ -619,6 +647,10 @@ async function main() {
       break;
     case "tweet":
       await cmdTweet();
+      break;
+    case "article":
+    case "read":
+      await cmdArticle();
       break;
     case "bookmarks":
     case "bm":

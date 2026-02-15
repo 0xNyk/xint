@@ -32,6 +32,14 @@ export async function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+export interface UrlEntity {
+  url: string;          // expanded_url or unwound_url (final resolved)
+  title?: string;       // page title from X API
+  description?: string; // page description/summary from X API
+  unwound_url?: string; // fully unwound URL (if different from expanded_url)
+  images?: string[];    // preview image URLs from X API
+}
+
 export interface Tweet {
   id: string;
   text: string;
@@ -48,7 +56,7 @@ export interface Tweet {
     impressions: number;
     bookmarks: number;
   };
-  urls: string[];
+  urls: UrlEntity[];
   mentions: string[];
   hashtags: string[];
   tweet_url: string;
@@ -91,8 +99,14 @@ export function parseTweets(raw: RawResponse): Tweet[] {
         bookmarks: m.bookmark_count || 0,
       },
       urls: (t.entities?.urls || [])
-        .map((u: any) => u.expanded_url)
-        .filter(Boolean),
+        .filter((u: any) => u.expanded_url)
+        .map((u: any): UrlEntity => ({
+          url: u.unwound_url || u.expanded_url,
+          ...(u.title && { title: u.title }),
+          ...(u.description && { description: u.description }),
+          ...(u.unwound_url && u.unwound_url !== u.expanded_url && { unwound_url: u.unwound_url }),
+          ...(u.images?.length > 0 && { images: u.images.map((img: any) => img.url || img).filter(Boolean) }),
+        })),
       mentions: (t.entities?.mentions || [])
         .map((m: any) => m.username)
         .filter(Boolean),

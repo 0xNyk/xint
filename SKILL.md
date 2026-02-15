@@ -89,6 +89,31 @@ Fetches full conversation thread by root tweet ID.
 bun run xint.ts tweet <tweet_id> [--json]
 ```
 
+### Article (Full Content Fetcher)
+
+```bash
+bun run xint.ts article <url> [--json] [--full]
+```
+
+Fetches and extracts full article content from any URL using xAI's web_search tool (Grok reads the page). Returns clean text with title, author, date, and word count. Requires `XAI_API_KEY`.
+
+**Options:**
+- `--json` — structured JSON output (title, content, author, published, wordCount, ttr)
+- `--full` — return full article text without truncation (default truncates to ~5000 chars)
+- `--model <name>` — Grok model (default: grok-3-mini)
+
+**Examples:**
+```bash
+bun run xint.ts article https://example.com/blog/post
+bun run xint.ts article https://techcrunch.com/article --json
+bun run xint.ts article https://blog.example.com/deep-dive --full
+```
+
+**Agent usage:** When search results include tweets with article links, use `article` to read the full content. Search results now include article titles and descriptions from the X API (shown as `📰` lines), so you can decide which articles are worth a full read. Prioritize articles that:
+- Multiple tweets reference
+- Come from high-engagement tweets
+- Have relevant titles/descriptions from the API metadata
+
 ### Bookmarks
 
 ```bash
@@ -357,9 +382,18 @@ bun run xint.ts thread <tweet_id>
 
 ### 4. Deep-Dive Linked Content
 
-When tweets link to GitHub repos, blog posts, or docs, fetch with web_fetch. Prioritize links that:
+Search results now include article titles and descriptions from the X API (shown as `📰` in output). Use these to decide which links are worth a full read, then fetch with `xint article`:
+
+```bash
+bun run xint.ts article <url>               # terminal display
+bun run xint.ts article <url> --json         # structured output
+bun run xint.ts article <url> --full         # no truncation
+```
+
+Prioritize links that:
 - Multiple tweets reference
 - Come from high-engagement tweets
+- Have titles/descriptions suggesting depth (not just link aggregators)
 - Point to technical resources directly relevant to the question
 
 ### 5. Analyze with Grok
@@ -420,6 +454,7 @@ xint/
 ├── xint.ts            (CLI entry point)
 ├── lib/
 │   ├── api.ts         (X API wrapper: search, thread, profile, tweet)
+│   ├── article.ts     (full article content fetcher via @extractus/article-extractor)
 │   ├── bookmarks.ts   (bookmark read — OAuth)
 │   ├── cache.ts       (file-based cache, 15min TTL)
 │   ├── costs.ts       (API cost tracking & budget)

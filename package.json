@@ -1,17 +1,23 @@
 {
   "name": "xint",
   "version": "3.0.0",
-  "description": "X Intelligence CLI — search, analyze, and engage on X/Twitter from your terminal",
-  "type": "module",
+  "author": "Nyk",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/0xNyk/xint.git"
+  },
   "main": "xint.ts",
   "bin": {
     "xint": "xint.ts"
   },
-  "scripts": {
-    "start": "bun run xint.ts",
-    "search": "bun run xint.ts search",
-    "trends": "bun run xint.ts trends"
+  "bugs": {
+    "url": "https://github.com/0xNyk/xint/issues"
   },
+  "description": "X Intelligence CLI — search, analyze, and engage on X/Twitter from your terminal",
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "homepage": "https://github.com/0xNyk/xint#readme",
   "keywords": [
     "twitter",
     "x",
@@ -29,17 +35,11 @@
     "bun",
     "typescript"
   ],
-  "author": "Nyk",
   "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/0xNyk/xint.git"
+  "scripts": {
+    "start": "bun run xint.ts",
+    "search": "bun run xint.ts search",
+    "trends": "bun run xint.ts trends"
   },
-  "bugs": {
-    "url": "https://github.com/0xNyk/xint/issues"
-  },
-  "homepage": "https://github.com/0xNyk/xint#readme",
-  "engines": {
-    "bun": ">=1.0.0"
-  }
+  "type": "module"
 }

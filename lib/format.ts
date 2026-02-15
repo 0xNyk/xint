@@ -2,7 +2,7 @@
  * Format tweets for Telegram or markdown output.
  */
 
-import type { Tweet } from "./api";
+import type { Tweet, UrlEntity } from "./api";
 
 function compactNumber(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -36,7 +36,12 @@ export function formatTweetTelegram(t: Tweet, index?: number, opts?: { full?: bo
   let out = `${prefix}@${t.username} (${engagement} · ${time})\n${cleanText}`;
 
   if (t.urls.length > 0) {
-    out += `\n🔗 ${t.urls[0]}`;
+    const u = t.urls[0];
+    if (u.title) {
+      out += `\n📰 "${u.title}"`;
+      if (u.description) out += ` — ${u.description.slice(0, 120)}`;
+    }
+    out += `\n🔗 ${u.url}`;
   }
   out += `\n${t.tweet_url}`;
 
@@ -78,7 +83,7 @@ export function formatTweetMarkdown(t: Tweet): string {
   let out = `- **@${t.username}** (${engagement}) [Tweet](${t.tweet_url})\n  > ${quoted}`;
 
   if (t.urls.length > 0) {
-    out += `\n  Links: ${t.urls.map((u) => `[${new URL(u).hostname}](${u})`).join(", ")}`;
+    out += `\n  Links: ${t.urls.map((u) => `[${u.title || new URL(u.url).hostname}](${u.url})`).join(", ")}`;
   }
 
   return out;

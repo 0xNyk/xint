@@ -82,7 +82,17 @@ Paginate with `next_token` from response `meta.next_token`.
       "impression_count": 0
     },
     "entities": {
-      "urls": [{"expanded_url": "https://..."}],
+      "urls": [{
+        "start": 120, "end": 143,
+        "url": "https://t.co/abc123",
+        "expanded_url": "https://example.com/article",
+        "display_url": "example.com/article",
+        "unwound_url": "https://example.com/article/full-path",
+        "title": "Article Title",
+        "description": "Brief description of the page content",
+        "images": [{"url": "https://example.com/og-image.jpg"}],
+        "status": 200
+      }],
       "mentions": [{"username": "..."}],
       "hashtags": [{"tag": "..."}]
     }
