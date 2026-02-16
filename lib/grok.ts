@@ -15,7 +15,19 @@ import type { Tweet } from "./api";
 
 export interface GrokMessage {
   role: "system" | "user" | "assistant";
-  content: string;
+  content: string | GrokContent[];
+}
+
+export interface GrokContent {
+  type: "text" | "image_url";
+  text?: string;
+  image_url?: {
+    url: string;
+  };
+}
+
+export interface GrokVisionOpts extends GrokOpts {
+  detail?: "low" | "high" | "auto";  // vision detail level
 }
 
 export interface GrokOpts {
@@ -245,6 +257,85 @@ export async function summarizeTrends(
   );
 }
 
+/**
+ * Analyze an image using Grok Vision.
+ * Accepts image URL or base64-encoded image data.
+ */
+export async function analyzeImage(
+  imageUrl: string,
+  question?: string,
+  opts?: GrokVisionOpts,
+): Promise<GrokResponse> {
+  const model = opts?.model || "grok-2-vision";  // Vision requires grok-2-vision or grok-3
+  const apiKey = getXaiKey();
+
+  const defaultQuestion = question || "Describe this image in detail. What do you see?";
+  
+  const messages: GrokMessage[] = [
+    {
+      role: "user",
+      content: [
+        { type: "text", text: defaultQuestion },
+        { type: "image_url", image_url: { url: imageUrl } }
+      ]
+    }
+  ];
+
+  const res = await fetch(XAI_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+      temperature: opts?.temperature ?? DEFAULT_TEMPERATURE,
+      max_tokens: opts?.maxTokens ?? DEFAULT_MAX_TOKENS,
+    }),
+  });
+
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as XaiApiError;
+    const msg = body.error?.message || res.statusText;
+
+    if (res.status === 401) {
+      throw new Error(`xAI auth failed (401): ${msg}. Check your XAI_API_KEY.`);
+    }
+    if (res.status === 402) {
+      throw new Error(`xAI payment required (402): ${msg}. Your account may be out of credits.`);
+    }
+    if (res.status === 429) {
+      throw new Error(`xAI rate limited (429): ${msg}. Try again in a moment.`);
+    }
+    if (res.status === 400 && msg.includes("vision")) {
+      throw new Error(`xAI vision error (400): ${msg}. Make sure you're using a vision-capable model (grok-2-vision, grok-3).`);
+    }
+    throw new Error(`xAI API error (${res.status}): ${msg}`);
+  }
+
+  const data = await res.json() as {
+    choices: Array<{ message: { content: string } }>;
+    model: string;
+    usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+  };
+
+  const choice = data.choices?.[0];
+  if (!choice) {
+    throw new Error("xAI API returned no choices");
+  }
+
+  return {
+    content: choice.message.content,
+    model: data.model,
+    usage: {
+      prompt_tokens: data.usage.prompt_tokens,
+      completion_tokens: data.usage.completion_tokens,
+      total_tokens: data.usage.prompt_tokens + data.usage.completion_tokens,
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Cost estimation
 // ---------------------------------------------------------------------------
@@ -271,6 +362,7 @@ export async function cmdAnalyze(args: string[]): Promise<void> {
   let systemPrompt: string | undefined;
   let tweetFile: string | undefined;
   let pipeMode = false;
+  let imageUrl: string | undefined;
   const queryParts: string[] = [];
 
   // Parse args
@@ -281,7 +373,7 @@ export async function cmdAnalyze(args: string[]): Promise<void> {
       case "--model":
         model = args[++i];
         if (!model) {
-          console.error("Error: --model requires a value (grok-3, grok-3-mini, grok-2)");
+          console.error("Error: --model requires a value (grok-3, grok-3-mini, grok-2, grok-2-vision)");
           process.exit(1);
         }
         break;
@@ -302,6 +394,14 @@ export async function cmdAnalyze(args: string[]): Promise<void> {
       case "--pipe":
         pipeMode = true;
         break;
+      case "--image":
+      case "-i":
+        imageUrl = args[++i];
+        if (!imageUrl) {
+          console.error("Error: --image requires an image URL or path");
+          process.exit(1);
+        }
+        break;
       case "--help":
       case "-h":
         printAnalyzeHelp();
@@ -316,6 +416,18 @@ export async function cmdAnalyze(args: string[]): Promise<void> {
 
   try {
     let response: GrokResponse;
+
+    // Image analysis mode
+    if (imageUrl) {
+      const question = queryParts.length > 0 ? queryParts.join(" ") : undefined;
+      // For image analysis, use grok-2-vision unless explicitly specified
+      // Note: Only grok-2-vision and grok-3 (not mini) support vision
+      const visionModel = (model === "grok-2-vision" || model === "grok-3") ? model : "grok-2-vision";
+      const visionOpts: GrokVisionOpts = { model: visionModel };
+      response = await analyzeImage(imageUrl, question, visionOpts);
+      printResponse(response);
+      return;
+    }
 
     if (pipeMode) {
       // Read tweets from stdin
@@ -410,17 +522,20 @@ function printAnalyzeHelp(): void {
 Usage: xint analyze <query>           Ask Grok a question
        xint analyze --tweets <file>   Analyze tweets from a JSON file
        xint analyze --pipe            Analyze tweets piped from stdin
+       xint analyze --image <url>     Analyze an image with Grok Vision
 
 Options:
-  --model <name>     Model: grok-3, grok-3-mini (default), grok-2
+  --model <name>     Model: grok-3, grok-3-mini (default), grok-2, grok-2-vision
   --system <prompt>  Custom system prompt
   --tweets <file>    Path to JSON file containing tweets
   --pipe             Read tweet JSON from stdin
+  --image, -i <url> Image URL to analyze with Grok Vision
 
 Examples:
   xint analyze "What are the top AI agent frameworks right now?"
   xint analyze --tweets data/search-results.json
   xint search "AI agents" --json | xint analyze --pipe "Which tweets show product launches?"
   xint analyze --model grok-3 "Deep analysis of crypto market sentiment"
+  xint analyze --image "https://example.com/chart.png" "What does this chart show?"
 `);
 }

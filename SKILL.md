@@ -4,13 +4,15 @@ description: >
   X Intelligence CLI — search, analyze, and engage on X/Twitter from the terminal.
   Use when: (1) user says "x research", "search x for", "search twitter for",
   "what are people saying about", "what's twitter saying", "check x for", "x search",
-  (2) user is working on something where recent X discourse would provide
-  useful context (new library releases, API changes, product launches, cultural events,
-  industry drama), (3) user wants to find what devs/experts/community thinks about a topic.
-  Also supports: real-time monitoring (watch), follower tracking (diff), intelligence reports,
-  AI sentiment analysis, likes, following, bookmarks (read/write), trending topics, Grok AI analysis,
+  "search x", "find tweets about", "monitor x for", "track followers", (2) user is working on 
+  something where recent X discourse would provide useful context (new library releases, 
+  API changes, product launches, cultural events, industry drama), (3) user wants to find 
+  what devs/experts/community thinks about a topic, (4) user needs real-time monitoring ("watch"),
+  (5) user wants AI-powered analysis ("analyze", "sentiment", "report").
+  Also supports: bookmarks, likes, following (read/write), trending topics, Grok AI analysis,
   and cost tracking. Export as JSON, JSONL (pipeable), CSV, or Markdown.
-  Requires OAuth for user-context operations.
+  Non-goals: Not for posting tweets, not for DMs, not for enterprise features.
+  Requires OAuth for user-context operations (bookmarks, likes, following, diff).
 credentials:
   - name: X_BEARER_TOKEN
     description: X API v2 bearer token for search, profile, thread, tweet, trends
@@ -31,6 +33,35 @@ credentials:
 General-purpose agentic research over X/Twitter. Decompose any research question into targeted searches, iteratively refine, follow threads, deep-dive linked content, and synthesize into a sourced briefing.
 
 For X API details (endpoints, operators, response format): read `references/x-api.md`.
+
+## Security Considerations
+
+This skill requires sensitive credentials. Follow these guidelines:
+
+### Credentials
+- **X_BEARER_TOKEN**: Required for X API. Treat as a secret - only set in environment or `.env` file
+- **XAI_API_KEY**: Optional, needed for AI analysis. Also a secret
+- **X_CLIENT_ID**: Optional, needed for OAuth. Less sensitive but don't expose publicly
+- **XAI_MANAGEMENT_API_KEY**: Optional, for collections management
+
+### File Writes
+- This skill writes to its own `data/` directory: cache, exports, snapshots, OAuth tokens
+- OAuth tokens stored with restrictive permissions (chmod 600)
+- Review exported data before sharing - may contain sensitive search queries
+
+### Webhooks
+- The `watch` command supports `--webhook` to send data to external URLs
+- Only use webhooks you control (your own servers, Slack/Discord you own)
+- Don't pass sensitive URLs as webhook targets
+
+### Agent Autonomy
+- This skill is designed to be added to agent skills directories
+- The instructions to "clone into skills directory" are intentional for skill functionality
+- Agents should ask before installing new skills if not explicitly requested
+
+### Installation
+- For Bun: prefer OS package managers over `curl | bash` when possible
+- Verify any installer scripts before running
 
 ## CLI Tool
 
@@ -105,20 +136,31 @@ bun run xint.ts tweet <tweet_id> [--json]
 ### Article (Full Content Fetcher)
 
 ```bash
-bun run xint.ts article <url> [--json] [--full]
+bun run xint.ts article <url> [--json] [--full] [--ai <prompt>]
 ```
 
 Fetches and extracts full article content from any URL using xAI's web_search tool (Grok reads the page). Returns clean text with title, author, date, and word count. Requires `XAI_API_KEY`.
 
+Also supports X tweet URLs — automatically extracts the linked article from the tweet and fetches it.
+
 **Options:**
 - `--json` — structured JSON output (title, content, author, published, wordCount, ttr)
 - `--full` — return full article text without truncation (default truncates to ~5000 chars)
-- `--model <name>` — Grok model (default: grok-3-mini)
+- `--model <name>` — Grok model (default: grok-4)
+- `--ai <prompt>` — analyze article with Grok AI (passes content to analyze command)
 
 **Examples:**
 ```bash
+# Fetch article from URL
 bun run xint.ts article https://example.com/blog/post
-bun run xint.ts article https://techcrunch.com/article --json
+
+# Auto-extract article from X tweet URL and analyze
+bun run xint.ts article "https://x.com/user/status/123456789" --ai "Summarize key takeaways"
+
+# Fetch + analyze with AI
+bun run xint.ts article https://techcrunch.com/article --ai "What are the main points?"
+
+# Full content without truncation
 bun run xint.ts article https://blog.example.com/deep-dive --full
 ```
 

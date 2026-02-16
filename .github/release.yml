@@ -1,0 +1,34 @@
+# GitHub Release configuration
+# This auto-generates release notes based on PR labels
+
+changelog:
+  categories:
+    - title: ✨ New Features
+      labels:
+        - enhancement
+        - feature
+    - title: 🐛 Bug Fixes
+      labels:
+        - bug
+        - fix
+        - patch
+    - title: 🔧 Changes
+      labels:
+        - refactor
+        - perf
+        - improvement
+    - title: 🔒 Security
+      labels:
+        - security
+        - vulnerability
+    - title: 📚 Documentation
+      labels:
+        - docs
+        - documentation
+    - title: 👋 Deprecations
+      labels:
+        - deprecation
+        - breaking
+    - title: Other Changes
+      labels:
+        - "*"

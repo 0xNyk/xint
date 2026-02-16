@@ -84,6 +84,7 @@ export async function cmdLikes(args: string[]): Promise<void> {
   if (!tweets) {
     const accessToken = await getValidToken();
     tweets = await fetchLikedTweets(userId, accessToken, Math.max(limit, 100));
+    trackCost("likes", `/2/users/me/liked_tweets`, tweets.length);
     cache.set(cacheKey, "", tweets);
   }
 

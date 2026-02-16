@@ -18,10 +18,11 @@ export interface WatchOpts {
   interval: number;        // polling interval in ms
   webhook?: string;        // POST new tweets to this URL
   limit?: number;          // max tweets to show per poll
-  sort?: string;           // sort order
+  sort?: string;          // sort order
   since?: string;          // initial time window
-  quiet?: boolean;         // suppress per-poll headers
-  jsonl?: boolean;         // output JSONL instead of formatted
+  quiet?: boolean;        // suppress per-poll headers
+  jsonl?: boolean;        // output JSONL instead of formatted
+  stream?: boolean;       // output SSE (Server-Sent Events)
 }
 
 // ---------------------------------------------------------------------------
@@ -129,7 +130,20 @@ export async function watch(query: string, opts: WatchOpts): Promise<void> {
         totalNew += newTweets.length;
         const limited = newTweets.slice(0, opts.limit || 10);
 
-        if (!opts.quiet) {
+        // SSE streaming output
+        if (opts.stream) {
+          for (const t of limited) {
+            const sseData = {
+              event: "tweet",
+              data: {
+                query,
+                timestamp: new Date().toISOString(),
+                tweet: t,
+              },
+            };
+            console.log(`event: tweet\ndata: ${JSON.stringify(sseData.data)}\n`);
+          }
+        } else if (!opts.quiet) {
           console.error(`\n[${nowIso()}] +${newTweets.length} new`);
         }
 
@@ -137,7 +151,7 @@ export async function watch(query: string, opts: WatchOpts): Promise<void> {
           for (const t of limited) {
             console.log(JSON.stringify(t));
           }
-        } else {
+        } else if (!opts.stream) {
           for (const t of limited) {
             console.log(fmt.formatTweetTelegram(t, undefined, { full: false }));
             console.log();
@@ -188,6 +202,7 @@ export async function cmdWatch(args: string[]): Promise<void> {
   let since: string | undefined;
   let quiet = false;
   let jsonl = false;
+  let stream = false;
 
   let i = 0;
   while (i < args.length) {
@@ -228,6 +243,10 @@ export async function cmdWatch(args: string[]): Promise<void> {
       case "--jsonl":
         jsonl = true;
         break;
+      case "--stream":
+      case "-s":
+        stream = true;
+        break;
       case "--help":
       case "-h":
         printWatchHelp();
@@ -254,7 +273,7 @@ export async function cmdWatch(args: string[]): Promise<void> {
     query += " -is:retweet";
   }
 
-  await watch(query, { interval, webhook, limit, since, quiet, jsonl });
+  await watch(query, { interval, webhook, limit, since, quiet, jsonl, stream });
 }
 
 function printWatchHelp(): void {
@@ -271,11 +290,13 @@ Options:
   --since <dur>          Initial time window to seed from (default: 1h)
   --quiet, -q            Suppress per-poll headers
   --jsonl                Output JSONL (one tweet per line)
+  --stream, -s           Output SSE (Server-Sent Events)
 
 Examples:
   xint watch "solana memecoins" --interval 5m
   xint watch "@vitalikbuterin" --interval 1m
   xint watch "AI agents" -i 30s --webhook https://hooks.slack.com/...
   xint watch "breaking news" --jsonl | tee -a feed.jsonl
+  xint watch "AI news" --stream | sse-consumer
 `);
 }

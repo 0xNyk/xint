@@ -1,0 +1,52 @@
+# Release Drafter Configuration
+# https://github.com/marketplace/release-drafter
+
+name-template: 'v$RESOLVED_VERSION'
+tag-template: 'v$RESOLVED_VERSION'
+
+categories:
+  - title: '✨ New Features'
+    labels:
+      - enhancement
+      - feature
+  - title: '🐛 Bug Fixes'
+    labels:
+      - bug
+      - fix
+      - patch
+  - title: '🔧 Changes'
+    labels:
+      - refactor
+      - perf
+      - improvement
+  - title: '🔒 Security'
+    labels:
+      - security
+      - vulnerability
+  - title: '📚 Documentation'
+    labels:
+      - docs
+      - documentation
+  - title: '👋 Deprecations'
+    labels:
+      - deprecation
+      - breaking
+
+change-template: '- $TITLE (#$NUMBER) @$AUTHOR'
+
+template: |
+  ## What's Changed
+
+  $CHANGES
+
+  ## Install / Upgrade
+
+  ```bash
+  # New install
+  npm install -g xint
+
+  # Upgrade
+  npm update -g xint
+  ```
+
+  **Full Changelog**: https://github.com/0xNyk/xint/compare/$PREVIOUS_TAG...v$RESOLVED_VERSION

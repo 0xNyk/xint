@@ -1,5 +1,6 @@
 # Secrets
 .env
+.env.local
 
 # OAuth tokens (sensitive)
 data/oauth-tokens.json

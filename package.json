@@ -1,6 +1,6 @@
 {
   "name": "xint",
-  "version": "3.0.0",
+  "version": "2026.02.17",
   "author": "Nyk",
   "repository": {
     "type": "git",
@@ -33,13 +33,26 @@
     "xai",
     "oauth",
     "bun",
-    "typescript"
+    "typescript",
+    "mcp",
+    "model-context-protocol",
+    "ai-agents"
   ],
   "license": "MIT",
   "scripts": {
     "start": "bun run xint.ts",
     "search": "bun run xint.ts search",
-    "trends": "bun run xint.ts trends"
+    "trends": "bun run xint.ts trends",
+    "mcp": "bun run xint.ts mcp-server",
+    "changeset": "changeset",
+    "version": "changeset version",
+    "changelog": "changeset version && changeset-changelog"
   },
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.5.0"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.29.8"
+  }
 }

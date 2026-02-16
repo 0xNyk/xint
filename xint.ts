@@ -68,6 +68,9 @@ import { cmdDiff } from "./lib/followers";
 import { analyzeSentiment, enrichTweets, computeStats, formatSentimentTweet, formatStats } from "./lib/sentiment";
 import { cmdReport } from "./lib/report";
 import { fetchArticle, formatArticle } from "./lib/article";
+import { cmdXSearch } from "./lib/x_search";
+import { cmdCollections } from "./lib/collections";
+import { cmdMCPServer } from "./lib/mcp";
 
 const SKILL_DIR = import.meta.dir;
 const WATCHLIST_PATH = join(SKILL_DIR, "data", "watchlist.json");
@@ -479,18 +482,50 @@ async function cmdCache() {
 }
 
 async function cmdArticle() {
-  const url = args[1];
+  let url = args[1];
   if (!url) {
-    console.error("Usage: xint article <url> [--json] [--full] [--model <name>]");
+    console.error("Usage: xint article <url> [--json] [--full] [--model <name>] [--ai <prompt>]");
+    console.error("       xint article <x-tweet-url> [--ai <prompt>]  # Auto-extract linked article");
     process.exit(1);
   }
 
   const asJson = getFlag("json");
   const full = getFlag("full");
   const model = getOpt("model");
+  const aiPrompt = getOpt("ai");
 
   try {
-    const article = await fetchArticle(url, { full, model });
+    let article;
+    
+    // Check if it's an X tweet URL - extract linked article
+    if (url.includes("x.com/") && url.includes("/status/")) {
+      console.log("🔍 Fetching tweet to extract linked article...");
+      const { fetchTweetForArticle } = await import("./lib/article");
+      const { tweet, articleUrl } = await fetchTweetForArticle(url);
+      
+      if (!articleUrl) {
+        console.log("📝 No external link found in tweet.");
+        console.log(`   Tweet: ${tweet.text?.slice(0, 200)}...`);
+        console.log(`   URL: ${tweet.tweet_url}`);
+        process.exit(0);
+      }
+      
+      console.log(`📄 Found link: ${articleUrl}\n`);
+      url = articleUrl;
+    }
+
+    // Fetch the article
+    article = await fetchArticle(url, { full, model });
+
+    // If AI prompt provided, analyze the article
+    if (aiPrompt) {
+      console.log("🤖 Analyzing with Grok...\n");
+      const { analyzeQuery } = await import("./lib/grok");
+      const analysis = await analyzeQuery(aiPrompt, article.content, { model: model || undefined });
+      console.log(`📝 Analysis: ${aiPrompt}\n`);
+      console.log(analysis.content);
+      console.log(`\n---`);
+    }
 
     if (asJson) {
       console.log(JSON.stringify(article, null, 2));
@@ -556,6 +591,14 @@ Commands:
   watchlist remove <user>     Remove user from watchlist
   watchlist check             Check recent from all watchlist accounts
   cache clear                 Clear search cache
+  ai-search <file>           Search X via xAI's x_search tool (AI-powered)
+  collections <subcmd>       Manage xAI Collections Knowledge Base
+  mcp-server [options]        Start MCP server for AI agents (Claude, OpenAI)
+
+MCP Server options:
+  --sse                       Run in SSE mode (HTTP server)
+  --port=<N>                  Port for SSE mode (default: 3000)
+  Run without flags for stdio mode (for Claude Code integration)
 
 Search options:
   --sort likes|impressions|retweets|recent   (default: likes)
@@ -708,6 +751,19 @@ async function main() {
       break;
     case "report":
       await cmdReport(args.slice(1));
+      break;
+    case "ai-search":
+    case "x_search":
+    case "xsearch":
+      await cmdXSearch(args.slice(1));
+      break;
+    case "collections":
+    case "kb":
+      await cmdCollections(args.slice(1));
+      break;
+    case "mcp":
+    case "mcp-server":
+      await cmdMCPServer(args.slice(1));
       break;
     default:
       usage();

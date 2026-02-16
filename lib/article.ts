@@ -64,7 +64,7 @@ function getXaiKey(): string {
 // ---------------------------------------------------------------------------
 
 const XAI_RESPONSES_ENDPOINT = "https://api.x.ai/v1/responses";
-const DEFAULT_MODEL = "grok-3-mini";
+const DEFAULT_MODEL = "grok-4";
 
 const ARTICLE_EXTRACT_PROMPT = `Read the article at this URL and extract its content. Return a JSON object with these fields:
 - title: article title
@@ -204,6 +204,41 @@ function parseArticleJson(raw: string, url: string, domain: string): Article {
 }
 
 // ---------------------------------------------------------------------------
+// X Tweet URL to Article
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract tweet ID from X URL and fetch the tweet to get linked articles.
+ */
+export async function fetchTweetForArticle(tweetUrl: string): Promise<{ tweet: any; articleUrl: string | null }> {
+  // Extract tweet ID from URL
+  const match = tweetUrl.match(/x\.com\/\w+\/status\/(\d+)/);
+  if (!match) {
+    throw new Error(`Invalid X tweet URL: ${tweetUrl}`);
+  }
+  
+  const tweetId = match[1];
+  
+  // Import dynamically to avoid circular dependencies
+  const { getTweet } = await import("./api");
+  const tweet = await getTweet(tweetId);
+  
+  if (!tweet) {
+    throw new Error(`Tweet not found: ${tweetId}`);
+  }
+  
+  // Extract article URL from tweet entities
+  let articleUrl: string | null = null;
+  if (tweet.entities?.urls?.[0]) {
+    const urlData = tweet.entities.urls[0];
+    // Prefer expanded_url, fallback to unwound_url
+    articleUrl = urlData.expanded_url || urlData.unwound_url || null;
+  }
+  
+  return { tweet, articleUrl };
+}
+
+// ---------------------------------------------------------------------------
 // Formatting
 // ---------------------------------------------------------------------------
 
@@ -227,5 +262,18 @@ export function formatArticle(article: Article): string {
     out += `\n${article.description}\n`;
   }
   out += `\n---\n\n${article.content}`;
+  return out;
+}
+
+/**
+ * Format article with tweet context for display.
+ */
+export function formatArticleWithTweet(article: Article, tweet: any): string {
+  const tweetUrl = tweet.tweet_url || `https://x.com/${tweet.username}/status/${tweet.id}`;
+  
+  let out = `📝 Tweet: ${tweetUrl}\n`;
+  out += `   ${tweet.text?.slice(0, 200)}${tweet.text?.length > 200 ? "..." : ""}\n\n`;
+  out += formatArticle(article);
+  
   return out;
 }

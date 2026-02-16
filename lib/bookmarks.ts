@@ -105,6 +105,9 @@ export async function cmdBookmarks(args: string[]): Promise<void> {
   console.error(`Fetching bookmarks for @${tokens.username}...`);
   const tweets = await fetchBookmarks(tokens.user_id, accessToken, fetchCount);
 
+  // Track cost
+  trackCost("bookmarks", `/2/users/me/bookmarks`, tweets.length);
+
   if (tweets.length === 0) {
     console.log("No bookmarks found.");
     return;

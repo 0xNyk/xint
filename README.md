@@ -67,6 +67,7 @@ bun run xint.ts search "your topic" --sort likes --limit 10
 | `thread <tweet_id>` | `t` | Fetch full conversation thread |
 | `profile <username>` | `p` | Recent tweets from a user |
 | `tweet <tweet_id>` | — | Fetch a single tweet |
+| `article <url>` | — | Fetch & analyze article content |
 | `bookmarks` | `bm` | List your bookmarked tweets (OAuth) |
 | `bookmark <id>` | — | Bookmark a tweet (OAuth) |
 | `unbookmark <id>` | — | Remove a bookmark (OAuth) |
@@ -82,6 +83,7 @@ bun run xint.ts search "your topic" --sort likes --limit 10
 | `auth status` | — | Check OAuth token status |
 | `auth refresh` | — | Manually refresh tokens |
 | `cache clear` | — | Clear search cache |
+| `mcp` | — | Start MCP server for AI agents |
 
 ## Search
 
@@ -225,6 +227,42 @@ bun run xint.ts analyze --model grok-3 "Deep analysis of crypto market sentiment
 
 Requires `XAI_API_KEY` in your `.env`. Models: `grok-3`, `grok-3-mini` (default), `grok-2`.
 
+## Article Fetching & Analysis
+
+Fetch and extract full article content from any URL using xAI's web_search tool. Also supports extracting linked articles from X tweets.
+
+```bash
+# Fetch article content
+bun run xint.ts article "https://example.com"
+
+# Fetch + analyze with AI
+bun run xint.ts article "https://example.com" --ai "Summarize key takeaways"
+
+# Auto-extract article from X tweet URL and analyze
+bun run xint.ts article "https://x.com/user/status/123456789" --ai "What are the main points?"
+
+# Full content without truncation
+bun run xint.ts article "https://example.com" --full
+
+# JSON output
+bun run xint.ts article "https://example.com" --json
+```
+
+The `article` command:
+- Uses xAI's `grok-4` model with web_search tool (requires `XAI_API_KEY`)
+- Extracts title, author, publication date, word count, reading time
+- `--ai` flag passes article content to Grok for analysis
+- Auto-detects X tweet URLs and extracts linked articles
+
+### Article Options
+
+```
+--full               Fetch full content (default: 5k chars truncated)
+--json               Output raw JSON
+--model <name>      Grok model (default: grok-4)
+--ai <prompt>       Analyze article with AI
+```
+
 ## Cost Management
 
 xint tracks every API call and its estimated cost.
@@ -331,10 +369,31 @@ xint/
 
 ## Security
 
+### Credentials
 - Bearer tokens are read from env vars or `.env` — never hardcoded or printed to stdout
 - OAuth tokens are stored with `chmod 600` and use atomic writes
+- X API keys and xAI keys should be treated as secrets
+
+### Data Privacy
 - Follower snapshots are stored locally and never transmitted
-- **AI agent users:** Session transcripts may log HTTP headers including tokens. Use env vars, review session settings, and rotate tokens if exposed.
+- Exported data (search results, reports) may contain sensitive queries - review before sharing
+- Cached data is stored in `data/cache/` - cleared with `cache clear`
+
+### Webhooks
+- The `watch` command supports `--webhook` to POST tweet data to external URLs
+- Only use webhooks you control (your own servers, verified Slack/Discord webhooks)
+- Don't pass sensitive URLs as webhook targets
+
+### AI Agent Usage
+- Session transcripts may log HTTP headers including tokens
+- Use environment variables instead of `.env` in untrusted environments
+- Review session settings and rotate tokens if exposed
+- Agents should ask before installing new skills if not explicitly requested
+
+### Installation
+- This skill recommends installing Bun via `curl -fsSL https://bun.sh/install | bash`
+- For stricter security, use OS package managers or verify installer scripts
+- The skill code is bundled - no hidden network fetches beyond normal API calls
 
 ## Contributing
 
