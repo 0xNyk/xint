@@ -120,6 +120,23 @@ describe("Cost Rates", () => {
     expect(COST_RATES.like.per_call).toBe(0.01);
   });
 
+  test("COST_RATES has follow/unfollow rates", () => {
+    const { COST_RATES } = require("./costs");
+
+    expect(COST_RATES.follow.per_call).toBe(0.01);
+    expect(COST_RATES.unfollow.per_call).toBe(0.01);
+  });
+
+  test("COST_RATES has stream rates", () => {
+    const { COST_RATES } = require("./costs");
+
+    expect(COST_RATES.media_metadata.per_tweet).toBe(0.005);
+    expect(COST_RATES.stream_connect.per_tweet).toBe(0.005);
+    expect(COST_RATES.stream_rules_list.per_call).toBe(0.01);
+    expect(COST_RATES.stream_rules_add.per_call).toBe(0.01);
+    expect(COST_RATES.stream_rules_delete.per_call).toBe(0.01);
+  });
+
   test("COST_RATES has trends rate", () => {
     const { COST_RATES } = require("./costs");
     

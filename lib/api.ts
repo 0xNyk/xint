@@ -28,6 +28,10 @@ function getToken(): string {
   );
 }
 
+export function getBearerToken(): string {
+  return getToken();
+}
+
 export async function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -171,6 +175,51 @@ async function apiGet(url: string): Promise<RawResponse> {
     throw new Error(`X API ${res.status}: ${body.slice(0, 200)}`);
   }
 
+  return res.json();
+}
+
+/**
+ * Bearer-authenticated GET request. Exposed for endpoints that don't use
+ * tweet parsing helpers (for example filtered stream rules management).
+ */
+export async function bearerGet(url: string): Promise<any> {
+  await sleep(RATE_DELAY_MS);
+  return apiGet(url);
+}
+
+/**
+ * Bearer-authenticated POST request.
+ */
+export async function bearerPost(url: string, body?: any): Promise<any> {
+  await sleep(RATE_DELAY_MS);
+  const token = getToken();
+
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+  };
+  const opts: RequestInit = { method: "POST", headers };
+
+  if (body !== undefined) {
+    headers["Content-Type"] = "application/json";
+    opts.body = JSON.stringify(body);
+  }
+
+  const res = await fetch(url, opts);
+
+  if (res.status === 429) {
+    const reset = res.headers.get("x-rate-limit-reset");
+    const waitSec = reset
+      ? Math.max(parseInt(reset) - Math.floor(Date.now() / 1000), 1)
+      : 60;
+    throw new Error(`Rate limited. Resets in ${waitSec}s`);
+  }
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`X API ${res.status}: ${text.slice(0, 200)}`);
+  }
+
+  if (res.status === 204) return { success: true };
   return res.json();
 }
 
@@ -388,6 +437,44 @@ export async function oauthPost(url: string, accessToken: string, body?: any): P
     Authorization: `Bearer ${accessToken}`,
   };
   const opts: RequestInit = { method: "POST", headers };
+
+  if (body !== undefined) {
+    headers["Content-Type"] = "application/json";
+    opts.body = JSON.stringify(body);
+  }
+
+  const res = await fetch(url, opts);
+
+  if (res.status === 401) {
+    throw new Error("OAuth token rejected (401). Try 'auth refresh' or re-run 'auth setup'.");
+  }
+  if (res.status === 429) {
+    const reset = res.headers.get("x-rate-limit-reset");
+    const waitSec = reset
+      ? Math.max(parseInt(reset) - Math.floor(Date.now() / 1000), 1)
+      : 60;
+    throw new Error(`Rate limited. Resets in ${waitSec}s`);
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`X API ${res.status}: ${text.slice(0, 200)}`);
+  }
+
+  if (res.status === 204) return { success: true };
+  return res.json();
+}
+
+/**
+ * OAuth-authenticated PUT request. Used for update operations
+ * (for example list metadata updates) that require user context.
+ */
+export async function oauthPut(url: string, accessToken: string, body?: any): Promise<any> {
+  await sleep(RATE_DELAY_MS);
+
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${accessToken}`,
+  };
+  const opts: RequestInit = { method: "PUT", headers };
 
   if (body !== undefined) {
     headers["Content-Type"] = "application/json";

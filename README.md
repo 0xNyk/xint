@@ -44,10 +44,16 @@ cp .env.example .env
 |------|---------|
 | Search | `xint search "AI agents"` |
 | Monitor | `xint watch "solana" -i 5m` |
+| Stream | `xint stream` |
 | Profile | `xint profile @elonmusk` |
 | Thread | `xint thread 123456789` |
 | Followers | `xint diff @username` |
 | Bookmarks | `xint bookmarks` |
+| Lists | `xint lists` |
+| Blocks | `xint blocks` |
+| Mutes | `xint mutes` |
+| Follow | `xint follow @username` |
+| Media | `xint media <tweet_id>` |
 | Trends | `xint trends` |
 | AI Analyze | `xint analyze "best AI frameworks?"` |
 | Report | `xint report "crypto"` |
@@ -85,7 +91,7 @@ XAI_API_KEY=your_xai_key_here
 
 ### 3. Optional: OAuth for Write Access
 
-For bookmarks, likes, and follower tracking:
+For bookmarks, likes, lists, blocks/mutes, and follower tracking:
 
 ```bash
 X_CLIENT_ID=your_oauth_client_id
@@ -140,6 +146,22 @@ xint watch "breaking" -i 30s --webhook https://hooks.slack.com/...
 
 Press `Ctrl+C` — shows session stats.
 
+## Stream (Official Filtered Stream)
+
+```bash
+# List current stream rules
+xint stream-rules
+
+# Add a filtered-stream rule
+xint stream-rules add "from:elonmusk -is:retweet" --tag elon
+
+# Connect to stream
+xint stream
+
+# JSONL output + stop after 25 events
+xint stream --jsonl --max-events 25
+```
+
 ## Follower Tracking
 
 ```bash
@@ -154,6 +176,63 @@ xint diff @username --following
 ```
 
 Requires OAuth (`xint auth setup`).
+
+## Lists (OAuth)
+
+```bash
+# List your owned lists
+xint lists
+
+# Create a private list
+xint lists create "AI Researchers" --description "High-signal accounts" --private
+
+# Add/remove members
+xint lists members add <list_id> @username
+xint lists members remove <list_id> @username
+```
+
+## Blocks & Mutes (OAuth)
+
+```bash
+# List blocked/muted users
+xint blocks
+xint mutes
+
+# Add/remove
+xint blocks add @username
+xint blocks remove @username
+xint mutes add @username
+xint mutes remove @username
+```
+
+## Follow Actions (OAuth)
+
+```bash
+xint follow @username
+xint unfollow @username
+```
+
+## Media Download
+
+```bash
+# Download media from a tweet ID
+xint media 1900100012345678901
+
+# Download media from a tweet URL
+xint media https://x.com/user/status/1900100012345678901
+
+# Custom output directory + JSON summary
+xint media 1900100012345678901 --dir ./downloads --json
+
+# Download only first video/gif
+xint media 1900100012345678901 --video-only --max-items 1
+
+# Download only photos
+xint media 1900100012345678901 --photos-only
+
+# Custom filename template
+xint media 1900100012345678901 --name-template "{username}-{created_at}-{index}"
+```
 
 ## Intelligence Reports
 
@@ -226,7 +305,7 @@ xint costs budget    # Show/set limits
 |----------|----------|-------------|
 | `X_BEARER_TOKEN` | Yes | X API v2 bearer token |
 | `XAI_API_KEY` | No | xAI key for analyze/report |
-| `X_CLIENT_ID` | No | OAuth for bookmarks/likes |
+| `X_CLIENT_ID` | No | OAuth for bookmarks/likes/lists/blocks/mutes |
 
 ## File Structure
 

@@ -7,6 +7,7 @@ import { BASE, FIELDS, oauthGet, oauthPost, oauthDelete, parseTweets, sleep, sor
 import type { Tweet } from "./api";
 import { getValidToken, loadTokens } from "./oauth";
 import { parseSince } from "./api";
+import { trackCost } from "./costs";
 import * as fmt from "./format";
 import * as cache from "./cache";
 
@@ -301,6 +302,110 @@ export async function cmdFollowing(args: string[]): Promise<void> {
     if (u.description) {
       console.log(`   ${u.description.slice(0, 200).replace(/\n/g, " ")}`);
     }
+  }
+}
+
+// ── Follow / Unfollow (write) ─────────────────────────────────────────
+
+function isLikelyUserId(input: string): boolean {
+  return /^\d+$/.test(input);
+}
+
+async function resolveTargetUser(input: string, accessToken: string): Promise<{ id: string; username: string }> {
+  const value = input.replace(/^@/, "");
+  if (isLikelyUserId(value)) {
+    return { id: value, username: value };
+  }
+
+  const lookupUrl = `${BASE}/users/by/username/${value}?user.fields=public_metrics`;
+  const lookupResult = await oauthGet(lookupUrl, accessToken);
+  if (!lookupResult?.data?.id) {
+    throw new Error(`User @${value} not found`);
+  }
+  return { id: lookupResult.data.id, username: lookupResult.data.username || value };
+}
+
+export async function followUser(
+  sourceUserId: string,
+  targetUserId: string,
+  accessToken: string,
+): Promise<boolean> {
+  const url = `${BASE}/users/${sourceUserId}/following`;
+  const result = await oauthPost(url, accessToken, { target_user_id: targetUserId });
+  return result?.data?.following === true || result?.success === true;
+}
+
+export async function cmdFollow(args: string[]): Promise<void> {
+  if (args.includes("--help") || args.includes("-h")) {
+    console.log("Usage: follow <@username|user_id> [--json]");
+    return;
+  }
+  const target = args.find((a) => !a.startsWith("-"));
+  const asJson = args.includes("--json");
+  if (!target) {
+    console.error("Usage: follow <@username|user_id> [--json]");
+    process.exit(1);
+  }
+
+  const tokens = loadTokens();
+  if (!tokens) throw new Error("Not authenticated. Run 'auth setup' first.");
+
+  const accessToken = await getValidToken();
+  const resolved = await resolveTargetUser(target, accessToken);
+  const ok = await followUser(tokens.user_id, resolved.id, accessToken);
+  trackCost("follow", `/2/users/${tokens.user_id}/following`, 0);
+
+  if (asJson) {
+    console.log(JSON.stringify({ success: ok, user_id: resolved.id, username: resolved.username }, null, 2));
+    return;
+  }
+
+  if (ok) {
+    console.log(`✅ Following @${resolved.username}`);
+  } else {
+    console.error(`Failed to follow @${resolved.username}`);
+  }
+}
+
+export async function unfollowUser(
+  sourceUserId: string,
+  targetUserId: string,
+  accessToken: string,
+): Promise<boolean> {
+  const url = `${BASE}/users/${sourceUserId}/following/${targetUserId}`;
+  const result = await oauthDelete(url, accessToken);
+  return result?.data?.following === false || result?.success === true;
+}
+
+export async function cmdUnfollow(args: string[]): Promise<void> {
+  if (args.includes("--help") || args.includes("-h")) {
+    console.log("Usage: unfollow <@username|user_id> [--json]");
+    return;
+  }
+  const target = args.find((a) => !a.startsWith("-"));
+  const asJson = args.includes("--json");
+  if (!target) {
+    console.error("Usage: unfollow <@username|user_id> [--json]");
+    process.exit(1);
+  }
+
+  const tokens = loadTokens();
+  if (!tokens) throw new Error("Not authenticated. Run 'auth setup' first.");
+
+  const accessToken = await getValidToken();
+  const resolved = await resolveTargetUser(target, accessToken);
+  const ok = await unfollowUser(tokens.user_id, resolved.id, accessToken);
+  trackCost("unfollow", `/2/users/${tokens.user_id}/following`, 0);
+
+  if (asJson) {
+    console.log(JSON.stringify({ success: ok, user_id: resolved.id, username: resolved.username }, null, 2));
+    return;
+  }
+
+  if (ok) {
+    console.log(`✅ Unfollowed @${resolved.username}`);
+  } else {
+    console.error(`Failed to unfollow @${resolved.username}`);
   }
 }
 

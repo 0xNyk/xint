@@ -4,7 +4,7 @@
  * Supports:
  * - One-time auth setup with PKCE flow (localhost callback or --manual paste)
  * - Token storage with auto-refresh
- * - Scopes: bookmark.read tweet.read users.read offline.access
+ * - Scopes: bookmark/like/follows/list/block/mute read+write, tweet.read/write, users.read, offline.access
  */
 
 import { existsSync, readFileSync, writeFileSync, chmodSync, mkdirSync, renameSync } from "fs";
@@ -20,7 +20,8 @@ const AUTHORIZE_URL = "https://x.com/i/oauth2/authorize";
 const TOKEN_URL = "https://api.x.com/2/oauth2/token";
 const USERS_ME_URL = "https://api.x.com/2/users/me";
 const REDIRECT_URI = "http://127.0.0.1:3333/callback";
-const SCOPES = "bookmark.read bookmark.write tweet.read tweet.write users.read like.read like.write follows.read follows.write offline.access";
+const SCOPES =
+  "bookmark.read bookmark.write like.read like.write follows.read follows.write list.read list.write block.read block.write mute.read mute.write tweet.read tweet.write users.read offline.access";
 
 // Token expiry buffer — refresh 60s before actual expiration
 const EXPIRY_BUFFER_MS = 60_000;

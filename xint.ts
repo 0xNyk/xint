@@ -17,6 +17,14 @@
  *   like <tweet_id>             Like a tweet (requires OAuth)
  *   unlike <tweet_id>           Unlike a tweet (requires OAuth)
  *   following [username]        List accounts you follow (requires OAuth)
+ *   follow <@user|id>           Follow a user (requires OAuth)
+ *   unfollow <@user|id>         Unfollow a user (requires OAuth)
+ *   media <tweet_id|url>        Download media from a tweet
+ *   stream [options]            Stream tweets using X filtered stream (rules-based)
+ *   stream-rules [subcommand]   Manage filtered stream rules
+ *   lists [subcommand]          Manage your X lists (requires OAuth)
+ *   blocks [subcommand]         Manage blocked users (requires OAuth)
+ *   mutes [subcommand]          Manage muted users (requires OAuth)
  *   bookmark <tweet_id>         Bookmark a tweet (requires OAuth)
  *   unbookmark <tweet_id>       Remove a bookmark (requires OAuth)
  *   trends [location] [opts]    Fetch trending topics
@@ -59,7 +67,16 @@ import * as cache from "./lib/cache";
 import * as fmt from "./lib/format";
 import { authSetup, authStatus, authRefresh } from "./lib/oauth";
 import { cmdBookmarks } from "./lib/bookmarks";
-import { cmdLikes, cmdLike, cmdUnlike, cmdFollowing, cmdBookmarkSave, cmdUnbookmark } from "./lib/engagement";
+import {
+  cmdLikes,
+  cmdLike,
+  cmdUnlike,
+  cmdFollowing,
+  cmdFollow,
+  cmdUnfollow,
+  cmdBookmarkSave,
+  cmdUnbookmark,
+} from "./lib/engagement";
 import { cmdTrends } from "./lib/trends";
 import { cmdAnalyze } from "./lib/grok";
 import { cmdCosts, trackCost, checkBudget } from "./lib/costs";
@@ -71,6 +88,10 @@ import { fetchArticle, formatArticle } from "./lib/article";
 import { cmdXSearch } from "./lib/x_search";
 import { cmdCollections } from "./lib/collections";
 import { cmdMCPServer } from "./lib/mcp";
+import { cmdLists } from "./lib/lists";
+import { cmdBlocks, cmdMutes } from "./lib/moderation";
+import { cmdStream, cmdStreamRules } from "./lib/stream";
+import { cmdMedia } from "./lib/media";
 
 const SKILL_DIR = import.meta.dir;
 const WATCHLIST_PATH = join(SKILL_DIR, "data", "watchlist.json");
@@ -578,6 +599,14 @@ Commands:
   like <tweet_id>             Like a tweet (OAuth required)
   unlike <tweet_id>           Unlike a tweet (OAuth required)
   following [username]        List accounts you follow (OAuth required)
+  follow <@user|id>           Follow a user (OAuth required)
+  unfollow <@user|id>         Unfollow a user (OAuth required)
+  media <tweet_id|url>        Download media from a tweet
+  stream [options]            Stream tweets using X filtered stream
+  stream-rules [subcmd]       Manage filtered stream rules
+  lists [subcmd]              Manage your X lists (OAuth required)
+  blocks [subcmd]             Manage blocked users (OAuth required)
+  mutes [subcmd]              Manage muted users (OAuth required)
   bookmark <tweet_id>         Bookmark a tweet (OAuth required)
   unbookmark <tweet_id>       Remove a bookmark (OAuth required)
   trends [location] [opts]    Fetch trending topics
@@ -629,6 +658,18 @@ Watch options:
   --quiet, -q                Suppress per-poll headers
   --jsonl                    Output JSONL for piping
 
+Stream options:
+  --json                     Output JSON per stream event
+  --jsonl                    Output JSONL per stream event
+  --max-events N             Stop after N events
+  --backfill N               Backfill 1-5 minutes (X API option)
+  --webhook <url>            POST event payloads to URL
+  --quiet, -q                Suppress stream status logs
+
+Stream rules options:
+  xint stream-rules [list|add|delete|clear]
+  Run 'xint stream-rules --help' for full examples
+
 Diff options:
   --following                Track following list instead of followers
   --history                  Show all saved snapshots
@@ -650,6 +691,26 @@ Bookmark/Like options:
   --markdown                 Markdown output
   --save                     Save to data/exports/
   --no-cache                 Skip cache
+  follow/unfollow also accept: --json
+
+Media options:
+  --dir <path>               Output directory (default: data/media)
+  --max-items <N>            Download up to N media items
+  --name-template <tpl>      Filename template tokens:
+                             {tweet_id} {username} {index} {type}
+                             {media_key} {created_at} {ext}
+  --photos-only              Download photos only
+  --video-only               Download videos/GIFs only
+  --json                     Output JSON summary
+
+Lists options:
+  xint lists [list|create|update|delete|members]
+  Run 'xint lists' for full subcommand help and examples
+
+Blocks/Mutes options:
+  xint blocks [list|add|remove]
+  xint mutes [list|add|remove]
+  Run 'xint blocks --help' or 'xint mutes --help' for examples
 
 Trends options:
   [location]                 Location name or WOEID (default: worldwide)
@@ -710,6 +771,34 @@ async function main() {
       break;
     case "following":
       await cmdFollowing(args.slice(1));
+      break;
+    case "follow":
+      await cmdFollow(args.slice(1));
+      break;
+    case "unfollow":
+      await cmdUnfollow(args.slice(1));
+      break;
+    case "media":
+      await cmdMedia(args.slice(1));
+      break;
+    case "stream":
+      await cmdStream(args.slice(1));
+      break;
+    case "stream-rules":
+    case "stream_rules":
+      await cmdStreamRules(args.slice(1));
+      break;
+    case "lists":
+    case "list":
+      await cmdLists(args.slice(1));
+      break;
+    case "blocks":
+    case "block":
+      await cmdBlocks(args.slice(1));
+      break;
+    case "mutes":
+    case "mute":
+      await cmdMutes(args.slice(1));
       break;
     case "bookmark":
     case "bm-save":

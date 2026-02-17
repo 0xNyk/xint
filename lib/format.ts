@@ -20,12 +20,34 @@ function timeAgo(dateStr: string): string {
   return `${days}d`;
 }
 
+function getMetrics(t: Tweet): Tweet["metrics"] {
+  return (
+    t.metrics || {
+      likes: 0,
+      retweets: 0,
+      replies: 0,
+      quotes: 0,
+      impressions: 0,
+      bookmarks: 0,
+    }
+  );
+}
+
+function getUsername(t: Tweet): string {
+  return t.username || t.author_id || "unknown";
+}
+
+function getTweetUrl(t: Tweet): string {
+  return t.tweet_url || `https://x.com/${getUsername(t)}/status/${t.id}`;
+}
+
 /**
  * Format a single tweet for Telegram (monospace-friendly).
  */
 export function formatTweetTelegram(t: Tweet, index?: number, opts?: { full?: boolean }): string {
   const prefix = index !== undefined ? `${index + 1}. ` : "";
-  const engagement = `${compactNumber(t.metrics.likes)}❤️ ${compactNumber(t.metrics.impressions)}👁`;
+  const metrics = getMetrics(t);
+  const engagement = `${compactNumber(metrics.likes)}❤️ ${compactNumber(metrics.impressions)}👁`;
   const time = timeAgo(t.created_at);
 
   // Truncate text to 200 chars for summary view, full text for single tweet/thread
@@ -33,9 +55,9 @@ export function formatTweetTelegram(t: Tweet, index?: number, opts?: { full?: bo
   // Clean up t.co links from text
   const cleanText = text.replace(/https:\/\/t\.co\/\S+/g, "").trim();
 
-  let out = `${prefix}@${t.username} (${engagement} · ${time})\n${cleanText}`;
+  let out = `${prefix}@${getUsername(t)} (${engagement} · ${time})\n${cleanText}`;
 
-  if (t.urls.length > 0) {
+  if ((t.urls || []).length > 0) {
     const u = t.urls[0];
     if (u.title) {
       out += `\n📰 "${u.title}"`;
@@ -43,7 +65,7 @@ export function formatTweetTelegram(t: Tweet, index?: number, opts?: { full?: bo
     }
     out += `\n🔗 ${u.url}`;
   }
-  out += `\n${t.tweet_url}`;
+  out += `\n${getTweetUrl(t)}`;
 
   return out;
 }
@@ -63,6 +85,11 @@ export function formatResultsTelegram(
     out += `🔍 "${opts.query}" — ${tweets.length} results\n\n`;
   }
 
+  if (shown.length === 0) {
+    out += "No results";
+    return out;
+  }
+
   out += shown.map((t, i) => formatTweetTelegram(t, i)).join("\n\n");
 
   if (tweets.length > limit) {
@@ -76,14 +103,19 @@ export function formatResultsTelegram(
  * Format a single tweet for markdown (research docs).
  */
 export function formatTweetMarkdown(t: Tweet): string {
-  const engagement = `${t.metrics.likes}L ${t.metrics.impressions}I`;
+  const metrics = getMetrics(t);
+  const username = getUsername(t);
+  const tweetUrl = getTweetUrl(t);
   const cleanText = t.text.replace(/https:\/\/t\.co\/\S+/g, "").trim();
   const quoted = cleanText.replace(/\n/g, "\n  > ");
+  const hashtags = (t.hashtags || []).map((h) => (h.startsWith("#") ? h : `#${h}`)).join(" ");
 
-  let out = `- **@${t.username}** (${engagement}) [Tweet](${t.tweet_url})\n  > ${quoted}`;
+  let out = `- **@${username}** [Tweet](${tweetUrl})\n  > ${quoted}`;
+  out += `\n  Metrics: ${metrics.likes} likes · ${metrics.retweets} retweets · ${metrics.replies} replies · ${metrics.impressions} impressions`;
+  if (hashtags) out += `\n  Hashtags: ${hashtags}`;
 
-  if (t.urls.length > 0) {
-    out += `\n  Links: ${t.urls.map((u) => `[${u.title || new URL(u.url).hostname}](${u.url})`).join(", ")}`;
+  if ((t.urls || []).length > 0) {
+    out += `\n  Links: ${(t.urls || []).map((u) => `[${u.title || new URL(u.url).hostname}](${u.url})`).join(", ")}`;
   }
 
   return out;
@@ -198,6 +230,13 @@ export function formatCsv(tweets: Tweet[]): string {
   return [header, ...rows].join("\n");
 }
 
+/**
+ * Backwards-compatible alias used by older tests/callers.
+ */
+export function formatResultsCsv(tweets: Tweet[]): string {
+  return formatCsv(tweets);
+}
+
 // ---------------------------------------------------------------------------
 // JSONL output (one JSON object per line)
 // ---------------------------------------------------------------------------
@@ -208,4 +247,11 @@ export function formatCsv(tweets: Tweet[]): string {
  */
 export function formatJsonl(tweets: Tweet[]): string {
   return tweets.map(t => JSON.stringify(t)).join("\n");
+}
+
+/**
+ * Backwards-compatible JSON formatter.
+ */
+export function formatResultsJson(tweets: Tweet[]): string {
+  return JSON.stringify(tweets, null, 2);
 }
