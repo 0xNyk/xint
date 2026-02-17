@@ -94,6 +94,7 @@ import { cmdBlocks, cmdMutes } from "./lib/moderation";
 import { cmdStream, cmdStreamRules } from "./lib/stream";
 import { cmdMedia } from "./lib/media";
 import { cmdCapabilities } from "./lib/capabilities";
+import { buildOutputMeta, printJsonWithMeta, printJsonlWithMeta } from "./lib/output-meta";
 
 const SKILL_DIR = import.meta.dir;
 const WATCHLIST_PATH = join(SKILL_DIR, "data", "watchlist.json");
@@ -101,8 +102,110 @@ const DRAFTS_DIR = join(SKILL_DIR, "data", "exports");
 
 // --- Arg parsing ---
 
+type PolicyMode = "read_only" | "engagement" | "moderation";
+type RequiredMode = PolicyMode;
+
+function policyRank(mode: PolicyMode): number {
+  switch (mode) {
+    case "read_only": return 1;
+    case "engagement": return 2;
+    case "moderation": return 3;
+  }
+}
+
+function parseGlobalPolicy(argv: string[]): PolicyMode {
+  let parsed: PolicyMode = "read_only";
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] !== "--policy") continue;
+    const raw = argv[i + 1];
+    if (!raw) {
+      console.error(`{"error":{"code":"POLICY_INVALID","message":"--policy requires one of: read_only, engagement, moderation"}}`);
+      process.exit(2);
+    }
+    if (raw !== "read_only" && raw !== "engagement" && raw !== "moderation") {
+      console.error(`{"error":{"code":"POLICY_INVALID","message":"Invalid --policy value","value":"${raw}"}}`);
+      process.exit(2);
+    }
+    parsed = raw as PolicyMode;
+    argv.splice(i, 2);
+    i--;
+  }
+  return parsed;
+}
+
 const args = process.argv.slice(2);
+const policyMode = parseGlobalPolicy(args);
 const command = args[0];
+
+const COMMAND_POLICY: Record<string, RequiredMode> = {
+  search: "read_only",
+  s: "read_only",
+  watch: "read_only",
+  w: "read_only",
+  diff: "engagement",
+  followers: "engagement",
+  report: "read_only",
+  thread: "read_only",
+  t: "read_only",
+  profile: "read_only",
+  p: "read_only",
+  tweet: "read_only",
+  media: "read_only",
+  article: "read_only",
+  read: "read_only",
+  bookmarks: "engagement",
+  bm: "engagement",
+  bookmark: "engagement",
+  unbookmark: "engagement",
+  likes: "engagement",
+  like: "engagement",
+  unlike: "engagement",
+  following: "engagement",
+  follow: "engagement",
+  unfollow: "engagement",
+  lists: "engagement",
+  list: "engagement",
+  blocks: "moderation",
+  block: "moderation",
+  mutes: "moderation",
+  mute: "moderation",
+  trends: "read_only",
+  tr: "read_only",
+  analyze: "read_only",
+  ask: "read_only",
+  costs: "read_only",
+  cost: "read_only",
+  auth: "engagement",
+  watchlist: "read_only",
+  wl: "read_only",
+  cache: "read_only",
+  "ai-search": "read_only",
+  x_search: "read_only",
+  xsearch: "read_only",
+  collections: "read_only",
+  kb: "read_only",
+  mcp: "read_only",
+  "mcp-server": "read_only",
+  capabilities: "read_only",
+  caps: "read_only",
+};
+
+function enforcePolicyOrExit(cmd?: string): void {
+  if (!cmd) return;
+  const required = COMMAND_POLICY[cmd] || "read_only";
+  if (policyRank(policyMode) >= policyRank(required)) return;
+  const payload = {
+    error: {
+      code: "POLICY_DENIED",
+      message: `Command '${cmd}' requires '${required}' policy mode`,
+      command: cmd,
+      policy_mode: policyMode,
+      required_mode: required,
+    },
+  };
+  console.error(JSON.stringify(payload));
+  process.exit(2);
+}
 
 function getFlag(name: string): boolean {
   const idx = args.indexOf(`--${name}`);
@@ -154,6 +257,7 @@ function warnIfOverBudget(): void {
 // --- Commands ---
 
 async function cmdSearch() {
+  const startedAtMs = Date.now();
   // Parse new flags first (before getOpt consumes positional args)
   const quick = getFlag("quick");
   const quality = getFlag("quality");
@@ -212,10 +316,12 @@ async function cmdSearch() {
   // Check cache (cache key does NOT include quick flag — shared between modes)
   const cacheParams = `sort=${sortOpt}&pages=${pages}&since=${since || "7d"}`;
   const cached = cache.get(query, cacheParams, cacheTtlMs);
+  let cacheHit = false;
   let tweets: api.Tweet[];
 
   if (cached) {
     tweets = cached;
+    cacheHit = true;
     console.error(`(cached — ${tweets.length} tweets)`);
   } else {
     tweets = await api.search(query, {
@@ -265,18 +371,27 @@ async function cmdSearch() {
     sentimentResults = await analyzeSentiment(tweets.slice(0, limit));
   }
 
+  const shown = tweets.slice(0, limit);
+  const endpoint = fullArchive ? "/2/tweets/search/all" : "/2/tweets/search/recent";
+  const estimatedCostUsd = cacheHit ? 0 : rawTweetCount * (fullArchive ? 0.01 : 0.005);
+  const outputMeta = buildOutputMeta({
+    source: "x_api_v2",
+    startedAtMs,
+    cached: cacheHit,
+    confidence: 1,
+    apiEndpoint: endpoint,
+    estimatedCostUsd,
+  });
+
   // Output
   if (asCsv) {
-    console.log(fmt.formatCsv(tweets.slice(0, limit)));
+    console.log(fmt.formatCsv(shown));
   } else if (asJsonl) {
-    console.log(fmt.formatJsonl(tweets.slice(0, limit)));
+    const payload = sentimentResults ? enrichTweets(shown, sentimentResults) : shown;
+    printJsonlWithMeta(outputMeta, payload, "tweet");
   } else if (asJson) {
-    if (sentimentResults) {
-      const enriched = enrichTweets(tweets.slice(0, limit), sentimentResults);
-      console.log(JSON.stringify(enriched, null, 2));
-    } else {
-      console.log(JSON.stringify(tweets.slice(0, limit), null, 2));
-    }
+    const payload = sentimentResults ? enrichTweets(shown, sentimentResults) : shown;
+    printJsonWithMeta(outputMeta, payload);
   } else if (asMarkdown) {
     const md = fmt.formatResearchMarkdown(query, tweets, {
       queries: [query],
@@ -357,6 +472,7 @@ async function cmdThread() {
 }
 
 async function cmdProfile() {
+  const startedAtMs = Date.now();
   const username = args[1]?.replace(/^@/, "");
   if (!username) {
     console.error("Usage: xint profile <username>");
@@ -376,7 +492,15 @@ async function cmdProfile() {
   trackCost("profile", `/2/users/by/username/${username}`, tweets.length + 1);
 
   if (asJson) {
-    console.log(JSON.stringify({ user, tweets }, null, 2));
+    const outputMeta = buildOutputMeta({
+      source: "x_api_v2",
+      startedAtMs,
+      cached: false,
+      confidence: 1,
+      apiEndpoint: `/2/users/by/username/${username}`,
+      estimatedCostUsd: (tweets.length + 1) * 0.005,
+    });
+    printJsonWithMeta(outputMeta, { user, tweets });
   } else {
     console.log(fmt.formatProfileTelegram(user, tweets));
   }
@@ -385,6 +509,7 @@ async function cmdProfile() {
 }
 
 async function cmdTweet() {
+  const startedAtMs = Date.now();
   const tweetId = args[1];
   if (!tweetId) {
     console.error("Usage: xint tweet <tweet_id>");
@@ -403,7 +528,15 @@ async function cmdTweet() {
 
   const asJson = getFlag("json");
   if (asJson) {
-    console.log(JSON.stringify(tweet, null, 2));
+    const outputMeta = buildOutputMeta({
+      source: "x_api_v2",
+      startedAtMs,
+      cached: false,
+      confidence: tweet ? 1 : 0,
+      apiEndpoint: `/2/tweets/${tweetId}`,
+      estimatedCostUsd: 0.005,
+    });
+    printJsonWithMeta(outputMeta, tweet);
   } else {
     console.log(fmt.formatTweetTelegram(tweet, undefined, { full: true }));
   }
@@ -623,6 +756,7 @@ Commands:
   watchlist remove <user>     Remove user from watchlist
   watchlist check             Check recent from all watchlist accounts
   cache clear                 Clear search cache
+  --policy <mode>             Global policy: read_only | engagement | moderation
   ai-search <file>           Search X via xAI's x_search tool (AI-powered)
   collections <subcmd>       Manage xAI Collections Knowledge Base
   mcp-server [options]        Start MCP server for AI agents (Claude, OpenAI)
@@ -740,6 +874,7 @@ Costs options:
 // --- Main ---
 
 async function main() {
+  enforcePolicyOrExit(command);
   switch (command) {
     case "search":
     case "s":

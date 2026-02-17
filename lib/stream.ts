@@ -10,6 +10,7 @@
 import * as api from "./api";
 import * as fmt from "./format";
 import { checkBudget, trackCost } from "./costs";
+import { buildOutputMeta } from "./output-meta";
 
 interface StreamOptions {
   json?: boolean;
@@ -198,10 +199,19 @@ async function runStream(opts: StreamOptions): Promise<void> {
             tweet,
           };
 
+          const meta = buildOutputMeta({
+            source: "x_api_v2",
+            startedAtMs: startMs,
+            cached: false,
+            confidence: 1,
+            apiEndpoint: "/2/tweets/search/stream",
+            estimatedCostUsd: 0.005,
+          });
+
           if (opts.json) {
-            console.log(JSON.stringify(event, null, 2));
+            console.log(JSON.stringify({ meta, data: event }, null, 2));
           } else if (opts.jsonl) {
-            console.log(JSON.stringify(event));
+            console.log(JSON.stringify({ ...meta, event }));
           } else {
             if (!opts.quiet) {
               console.error(`[${nowIso()}] Stream match (${event.matching_rules.length} rule(s))`);

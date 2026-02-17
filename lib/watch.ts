@@ -9,6 +9,7 @@ import * as api from "./api";
 import * as cache from "./cache";
 import * as fmt from "./format";
 import { trackCost, checkBudget } from "./costs";
+import { buildOutputMeta } from "./output-meta";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -108,6 +109,7 @@ export async function watch(query: string, opts: WatchOpts): Promise<void> {
 
   while (running) {
     try {
+      const pollStartedAtMs = Date.now();
       const tweets = await api.search(query, {
         pages: 1,
         sortOrder: "recency",
@@ -149,7 +151,15 @@ export async function watch(query: string, opts: WatchOpts): Promise<void> {
 
         if (opts.jsonl) {
           for (const t of limited) {
-            console.log(JSON.stringify(t));
+            const meta = buildOutputMeta({
+              source: "x_api_v2",
+              startedAtMs: pollStartedAtMs,
+              cached: false,
+              confidence: 1,
+              apiEndpoint: "/2/tweets/search/recent",
+              estimatedCostUsd: 0.005,
+            });
+            console.log(JSON.stringify({ ...meta, tweet: t }));
           }
         } else if (!opts.stream) {
           for (const t of limited) {
