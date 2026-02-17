@@ -8,6 +8,7 @@
  *   profile <username>          Recent tweets from a user
  *   tweet <tweet_id>            Fetch a single tweet
  *   article <url>               Fetch and read full article content
+ *   capabilities                Print machine-readable capability manifest
  *   watchlist                   Show watchlist
  *   watchlist add <user>        Add user to watchlist
  *   watchlist remove <user>     Remove user from watchlist
@@ -92,6 +93,7 @@ import { cmdLists } from "./lib/lists";
 import { cmdBlocks, cmdMutes } from "./lib/moderation";
 import { cmdStream, cmdStreamRules } from "./lib/stream";
 import { cmdMedia } from "./lib/media";
+import { cmdCapabilities } from "./lib/capabilities";
 
 const SKILL_DIR = import.meta.dir;
 const WATCHLIST_PATH = join(SKILL_DIR, "data", "watchlist.json");
@@ -594,6 +596,7 @@ Commands:
   profile <username>          Recent tweets from a user
   tweet <tweet_id>            Fetch a single tweet
   article <url>               Fetch and read full article content
+  capabilities                Print machine-readable capability manifest
   bookmarks [options]         Fetch your bookmarked tweets (OAuth required)
   likes [options]             Fetch your liked tweets (OAuth required)
   like <tweet_id>             Like a tweet (OAuth required)
@@ -623,6 +626,7 @@ Commands:
   ai-search <file>           Search X via xAI's x_search tool (AI-powered)
   collections <subcmd>       Manage xAI Collections Knowledge Base
   mcp-server [options]        Start MCP server for AI agents (Claude, OpenAI)
+  capabilities [--compact]    Print JSON capability/pricing/policy schema
 
 MCP Server options:
   --sse                       Run in SSE mode (HTTP server)
@@ -853,6 +857,10 @@ async function main() {
     case "mcp":
     case "mcp-server":
       await cmdMCPServer(args.slice(1));
+      break;
+    case "capabilities":
+    case "caps":
+      cmdCapabilities(args.slice(1));
       break;
     default:
       usage();

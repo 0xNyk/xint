@@ -58,6 +58,7 @@ cp .env.example .env
 | AI Analyze | `xint analyze "best AI frameworks?"` |
 | Report | `xint report "crypto"` |
 | Article | `xint article <url> --ai "summarize"` |
+| Capabilities | `xint capabilities --json` |
 
 ### Shorthands
 
@@ -98,6 +99,18 @@ X_CLIENT_ID=your_oauth_client_id
 ```
 
 Run `xint auth setup` to complete OAuth flow.
+
+## Agent-Native Capabilities Manifest
+
+`xint` now ships a machine-readable manifest for agent runtime allowlists and tool routing:
+
+```bash
+# Pretty JSON
+xint capabilities
+
+# Compact JSON for machine ingestion
+xint capabilities --compact
+```
 
 ## Search
 
