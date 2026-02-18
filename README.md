@@ -353,6 +353,21 @@ See [SECURITY.md](docs/security.md) for full details.
 
 Open source! See [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Release Automation
+
+`xint` is the source of truth for release automation across `xint` and `xint-rs`.
+
+```bash
+# from xint/
+./scripts/release.sh --dry-run --allow-dirty
+./scripts/release.sh 2026.2.18.4 --allow-dirty --ai-skill
+```
+
+Optional path overrides:
+
+- `REPO_PATH_XINT` (defaults to current repo when running inside `xint`)
+- `REPO_PATH_XINT_RS` (defaults to sibling `../xint-rs` when present)
+
 ## License
 
 [MIT](LICENSE) · [0xNyk](https://github.com/0xNyk)
