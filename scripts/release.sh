@@ -525,20 +525,41 @@ push_repo() {
 publish_clawdhub() {
   local repo="$1"
   local claw_version
+  local source_path
+  local publish_path
+  local temp_dir=""
   claw_version="$(cargo_semver_version "$VERSION")"
+  source_path="$(repo_path "$repo")"
+  publish_path="$source_path"
+
+  # Publish from a temporary export to avoid tool-side mutations (e.g. Cargo.lock rewrites).
+  if [[ "$DRY_RUN" != "true" ]]; then
+    temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/xint-clawdhub-$repo-XXXXXX")"
+    if git -C "$source_path" archive --format=tar HEAD | tar -xf - -C "$temp_dir"; then
+      publish_path="$temp_dir"
+    else
+      warn "Failed to create temp export for $repo; falling back to live repo path"
+      publish_path="$source_path"
+    fi
+  fi
+
   if command -v clawdhub >/dev/null 2>&1; then
-    if ! run clawdhub publish "$(repo_path "$repo")" --slug "$repo" --version "$claw_version" --changelog "Release v$VERSION"; then
+    if ! run clawdhub publish "$publish_path" --slug "$repo" --version "$claw_version" --changelog "Release v$VERSION"; then
       warn "ClawdHub publish failed for $repo; continuing release pipeline"
     fi
   else
     warn "clawdhub not found; skipping"
+  fi
+
+  if [[ -n "$temp_dir" && -d "$temp_dir" ]]; then
+    rm -rf "$temp_dir"
   fi
 }
 
 publish_skillsh() {
   local repo="$1"
   local npm_cache
-  npm_cache="${NPM_CONFIG_CACHE:-${npm_config_cache:-$ROOT_DIR/.cache/npm}}"
+  npm_cache="${NPM_CONFIG_CACHE:-${npm_config_cache:-${TMPDIR:-/tmp}/xint-npm-cache}}"
 
   if command -v npx >/dev/null 2>&1; then
     if [[ "$DRY_RUN" == "true" ]]; then
