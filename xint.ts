@@ -95,6 +95,8 @@ import { cmdStream, cmdStreamRules } from "./lib/stream";
 import { cmdMedia } from "./lib/media";
 import { cmdCapabilities } from "./lib/capabilities";
 import { buildOutputMeta, printJsonWithMeta, printJsonlWithMeta } from "./lib/output-meta";
+import { cmdAuthDoctor, cmdHealth } from "./lib/health";
+import { consumeCommandFallback, recordCommandResult } from "./lib/reliability";
 
 const SKILL_DIR = import.meta.dir;
 const WATCHLIST_PATH = join(SKILL_DIR, "data", "watchlist.json");
@@ -175,7 +177,8 @@ const COMMAND_POLICY: Record<string, RequiredMode> = {
   ask: "read_only",
   costs: "read_only",
   cost: "read_only",
-  auth: "engagement",
+  auth: "read_only",
+  health: "read_only",
   watchlist: "read_only",
   wl: "read_only",
   cache: "read_only",
@@ -709,11 +712,15 @@ async function cmdAuth() {
     case "refresh":
       await authRefresh();
       break;
+    case "doctor":
+      await cmdAuthDoctor(args.slice(2));
+      break;
     default:
       console.log(`auth commands:
   auth setup [--manual]   Set up OAuth 2.0 (PKCE) authentication
   auth status             Check token status
-  auth refresh            Manually refresh tokens`);
+  auth refresh            Manually refresh tokens
+  auth doctor [--json]    Validate auth credentials and scopes`);
   }
 }
 
@@ -748,9 +755,11 @@ Commands:
   trends [location] [opts]    Fetch trending topics
   analyze <query>             Analyze with Grok AI (xAI)
   costs [today|week|month]    View API cost tracking & budget
+  health [--json]             Runtime health, auth checks, and reliability stats
   auth setup [--manual]       Set up OAuth 2.0 PKCE authentication
   auth status                 Check OAuth token status
   auth refresh                Manually refresh OAuth tokens
+  auth doctor [--json]        Validate auth credentials and scopes
   watchlist                   Show watchlist
   watchlist add <user> [note] Add user to watchlist
   watchlist remove <user>     Remove user from watchlist
@@ -765,6 +774,8 @@ Commands:
 MCP Server options:
   --sse                       Run in SSE mode (HTTP server)
   --port=<N>                  Port for SSE mode (default: 3000)
+  --policy=<mode>             MCP policy mode: read_only|engagement|moderation
+  --no-budget-guard           Disable budget guard for tool calls
   Run without flags for stdio mode (for Claude Code integration)
 
 Search options:
@@ -873,132 +884,184 @@ Costs options:
 
 // --- Main ---
 
+function metricCommandName(cmd?: string): string | null {
+  if (!cmd) return null;
+  if (cmd === "s") return "search";
+  if (cmd === "w") return "watch";
+  if (cmd === "t") return "thread";
+  if (cmd === "p") return "profile";
+  if (cmd === "tr") return "trends";
+  if (cmd === "cost") return "costs";
+  if (cmd === "bm") return "bookmarks";
+  if (cmd === "caps") return "capabilities";
+  if (cmd === "wl") return "watchlist";
+  if (cmd === "kb") return "collections";
+  if (cmd === "mcp") return "mcp-server";
+  if (cmd === "stream_rules") return "stream-rules";
+  if (cmd === "bm-save") return "bookmark";
+  if (cmd === "bm-remove") return "unbookmark";
+  if (cmd === "followers") return "diff";
+  if (cmd === "ask") return "analyze";
+  if (cmd === "read") return "article";
+  if (cmd === "x_search" || cmd === "xsearch" || cmd === "ai-search") return "ai-search";
+  if (cmd === "list") return "lists";
+  if (cmd === "block") return "blocks";
+  if (cmd === "mute") return "mutes";
+  const known = new Set([
+    "search", "watch", "diff", "report", "thread", "profile", "tweet", "article",
+    "bookmarks", "likes", "like", "unlike", "following", "follow", "unfollow",
+    "media", "stream", "stream-rules", "lists", "blocks", "mutes", "bookmark",
+    "unbookmark", "trends", "analyze", "costs", "health", "auth", "watchlist",
+    "cache", "ai-search", "collections", "mcp-server", "capabilities",
+  ]);
+  return known.has(cmd) ? cmd : null;
+}
+
 async function main() {
   enforcePolicyOrExit(command);
-  switch (command) {
-    case "search":
-    case "s":
-      await cmdSearch();
-      break;
-    case "thread":
-    case "t":
-      await cmdThread();
-      break;
-    case "profile":
-    case "p":
-      await cmdProfile();
-      break;
-    case "tweet":
-      await cmdTweet();
-      break;
-    case "article":
-    case "read":
-      await cmdArticle();
-      break;
-    case "bookmarks":
-    case "bm":
-      await cmdBookmarks(args.slice(1));
-      break;
-    case "likes":
-      await cmdLikes(args.slice(1));
-      break;
-    case "like":
-      await cmdLike(args.slice(1));
-      break;
-    case "unlike":
-      await cmdUnlike(args.slice(1));
-      break;
-    case "following":
-      await cmdFollowing(args.slice(1));
-      break;
-    case "follow":
-      await cmdFollow(args.slice(1));
-      break;
-    case "unfollow":
-      await cmdUnfollow(args.slice(1));
-      break;
-    case "media":
-      await cmdMedia(args.slice(1));
-      break;
-    case "stream":
-      await cmdStream(args.slice(1));
-      break;
-    case "stream-rules":
-    case "stream_rules":
-      await cmdStreamRules(args.slice(1));
-      break;
-    case "lists":
-    case "list":
-      await cmdLists(args.slice(1));
-      break;
-    case "blocks":
-    case "block":
-      await cmdBlocks(args.slice(1));
-      break;
-    case "mutes":
-    case "mute":
-      await cmdMutes(args.slice(1));
-      break;
-    case "bookmark":
-    case "bm-save":
-      await cmdBookmarkSave(args.slice(1));
-      break;
-    case "unbookmark":
-    case "bm-remove":
-      await cmdUnbookmark(args.slice(1));
-      break;
-    case "trends":
-    case "tr":
-      await cmdTrends(args.slice(1));
-      break;
-    case "analyze":
-    case "ask":
-      await cmdAnalyze(args.slice(1));
-      break;
-    case "costs":
-    case "cost":
-      cmdCosts(args.slice(1));
-      break;
-    case "auth":
-      await cmdAuth();
-      break;
-    case "watchlist":
-    case "wl":
-      await cmdWatchlist();
-      break;
-    case "cache":
-      await cmdCache();
-      break;
-    case "watch":
-    case "w":
-      await cmdWatch(args.slice(1));
-      break;
-    case "diff":
-    case "followers":
-      await cmdDiff(args.slice(1));
-      break;
-    case "report":
-      await cmdReport(args.slice(1));
-      break;
-    case "ai-search":
-    case "x_search":
-    case "xsearch":
-      await cmdXSearch(args.slice(1));
-      break;
-    case "collections":
-    case "kb":
-      await cmdCollections(args.slice(1));
-      break;
-    case "mcp":
-    case "mcp-server":
-      await cmdMCPServer(args.slice(1));
-      break;
-    case "capabilities":
-    case "caps":
-      cmdCapabilities(args.slice(1));
-      break;
-    default:
-      usage();
+  const metricCommand = metricCommandName(command);
+  const startedAtMs = Date.now();
+
+  try {
+    switch (command) {
+      case "search":
+      case "s":
+        await cmdSearch();
+        break;
+      case "thread":
+      case "t":
+        await cmdThread();
+        break;
+      case "profile":
+      case "p":
+        await cmdProfile();
+        break;
+      case "tweet":
+        await cmdTweet();
+        break;
+      case "article":
+      case "read":
+        await cmdArticle();
+        break;
+      case "bookmarks":
+      case "bm":
+        await cmdBookmarks(args.slice(1));
+        break;
+      case "likes":
+        await cmdLikes(args.slice(1));
+        break;
+      case "like":
+        await cmdLike(args.slice(1));
+        break;
+      case "unlike":
+        await cmdUnlike(args.slice(1));
+        break;
+      case "following":
+        await cmdFollowing(args.slice(1));
+        break;
+      case "follow":
+        await cmdFollow(args.slice(1));
+        break;
+      case "unfollow":
+        await cmdUnfollow(args.slice(1));
+        break;
+      case "media":
+        await cmdMedia(args.slice(1));
+        break;
+      case "stream":
+        await cmdStream(args.slice(1));
+        break;
+      case "stream-rules":
+      case "stream_rules":
+        await cmdStreamRules(args.slice(1));
+        break;
+      case "lists":
+      case "list":
+        await cmdLists(args.slice(1));
+        break;
+      case "blocks":
+      case "block":
+        await cmdBlocks(args.slice(1));
+        break;
+      case "mutes":
+      case "mute":
+        await cmdMutes(args.slice(1));
+        break;
+      case "bookmark":
+      case "bm-save":
+        await cmdBookmarkSave(args.slice(1));
+        break;
+      case "unbookmark":
+      case "bm-remove":
+        await cmdUnbookmark(args.slice(1));
+        break;
+      case "trends":
+      case "tr":
+        await cmdTrends(args.slice(1));
+        break;
+      case "analyze":
+      case "ask":
+        await cmdAnalyze(args.slice(1));
+        break;
+      case "costs":
+      case "cost":
+        cmdCosts(args.slice(1));
+        break;
+      case "health":
+        await cmdHealth(args.slice(1));
+        break;
+      case "auth":
+        await cmdAuth();
+        break;
+      case "watchlist":
+      case "wl":
+        await cmdWatchlist();
+        break;
+      case "cache":
+        await cmdCache();
+        break;
+      case "watch":
+      case "w":
+        await cmdWatch(args.slice(1));
+        break;
+      case "diff":
+      case "followers":
+        await cmdDiff(args.slice(1));
+        break;
+      case "report":
+        await cmdReport(args.slice(1));
+        break;
+      case "ai-search":
+      case "x_search":
+      case "xsearch":
+        await cmdXSearch(args.slice(1));
+        break;
+      case "collections":
+      case "kb":
+        await cmdCollections(args.slice(1));
+        break;
+      case "mcp":
+      case "mcp-server":
+        process.env.XINT_POLICY_MODE = policyMode;
+        await cmdMCPServer(args.slice(1));
+        break;
+      case "capabilities":
+      case "caps":
+        cmdCapabilities(args.slice(1));
+        break;
+      default:
+        usage();
+    }
+    if (metricCommand) {
+      const fallback = consumeCommandFallback(metricCommand);
+      recordCommandResult(metricCommand, true, Date.now() - startedAtMs, { mode: "cli", fallback });
+    }
+  } catch (error) {
+    if (metricCommand) {
+      const fallback = consumeCommandFallback(metricCommand);
+      recordCommandResult(metricCommand, false, Date.now() - startedAtMs, { mode: "cli", fallback });
+    }
+    throw error;
   }
 }
 

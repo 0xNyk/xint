@@ -7,9 +7,20 @@
 
 import * as api from "./api";
 import * as cache from "./cache";
-import { cmdXSearch } from "./x_search";
-import { cmdCollections } from "./collections";
-import { cmdAnalyze } from "./grok";
+import { checkBudget, trackCost } from "./costs";
+import { recordCommandResult } from "./reliability";
+
+type PolicyMode = "read_only" | "engagement" | "moderation";
+
+interface MCPServerOptions {
+  policyMode: PolicyMode;
+  enforceBudget: boolean;
+}
+
+interface ToolExecutionResult {
+  data: unknown;
+  fallbackUsed: boolean;
+}
 
 // Tool definitions
 const TOOLS = [
@@ -156,10 +167,56 @@ const TOOLS = [
   },
 ];
 
+const TOOL_POLICY: Record<string, PolicyMode> = {
+  xint_search: "read_only",
+  xint_profile: "read_only",
+  xint_thread: "read_only",
+  xint_tweet: "read_only",
+  xint_article: "read_only",
+  xint_xsearch: "read_only",
+  xint_collections_list: "read_only",
+  xint_collections_search: "read_only",
+  xint_analyze: "read_only",
+  xint_trends: "read_only",
+  xint_bookmarks: "engagement",
+  xint_cache_clear: "read_only",
+};
+
+const TOOL_BUDGET_GUARDED = new Set<string>([
+  "xint_search",
+  "xint_profile",
+  "xint_thread",
+  "xint_tweet",
+  "xint_trends",
+  "xint_xsearch",
+  "xint_collections_list",
+  "xint_collections_search",
+  "xint_analyze",
+  "xint_bookmarks",
+]);
+
+function policyRank(mode: PolicyMode): number {
+  switch (mode) {
+    case "read_only": return 1;
+    case "engagement": return 2;
+    case "moderation": return 3;
+  }
+}
+
+function parsePolicyMode(raw?: string): PolicyMode {
+  if (raw === "engagement" || raw === "moderation") return raw;
+  return "read_only";
+}
+
 // MCP Server implementation
 class MCPServer {
   private initialized = false;
   private idCounter = 1;
+  private readonly options: MCPServerOptions;
+
+  constructor(options: MCPServerOptions) {
+    this.options = options;
+  }
 
   async handleMessage(msg: string): Promise<string | null> {
     let request: any;
@@ -174,6 +231,7 @@ class MCPServer {
 
     const { method, params, id } = request;
     const requestId = id ?? this.idCounter++;
+    const toolStartedAtMs = method === "tools/call" ? Date.now() : 0;
 
     try {
       switch (method) {
@@ -204,13 +262,19 @@ class MCPServer {
           const toolName = params?.name;
           const args = params?.arguments || {};
           const result = await this.executeTool(toolName, args);
+          recordCommandResult(
+            `mcp:${toolName}`,
+            true,
+            Date.now() - toolStartedAtMs,
+            { mode: "mcp", fallback: result.fallbackUsed },
+          );
           return JSON.stringify({
             jsonrpc: "2.0",
             id: requestId,
             result: {
               content: [{
                 type: "text",
-                text: typeof result === "string" ? result : JSON.stringify(result, null, 2)
+                text: typeof result.data === "string" ? result.data : JSON.stringify(result.data, null, 2)
               }]
             }
           });
@@ -224,6 +288,14 @@ class MCPServer {
           });
       }
     } catch (error: any) {
+      if (method === "tools/call" && params?.name) {
+        recordCommandResult(
+          `mcp:${params.name}`,
+          false,
+          Math.max(0, Date.now() - toolStartedAtMs),
+          { mode: "mcp" },
+        );
+      }
       return JSON.stringify({
         jsonrpc: "2.0",
         id: requestId,
@@ -238,13 +310,46 @@ class MCPServer {
     return input;
   }
 
-  private async executeTool(name: string, args: any): Promise<any> {
+  private ensurePolicyAllowed(name: string): void {
+    const required = TOOL_POLICY[name] || "read_only";
+    if (policyRank(this.options.policyMode) >= policyRank(required)) return;
+    throw new Error(
+      JSON.stringify({
+        code: "POLICY_DENIED",
+        message: `MCP tool '${name}' requires '${required}' policy mode`,
+        policy_mode: this.options.policyMode,
+        required_mode: required,
+      }),
+    );
+  }
+
+  private ensureBudgetAllowed(name: string): void {
+    if (!this.options.enforceBudget) return;
+    if (!TOOL_BUDGET_GUARDED.has(name)) return;
+    const budget = checkBudget();
+    if (budget.allowed) return;
+    throw new Error(
+      JSON.stringify({
+        code: "BUDGET_DENIED",
+        message: `Daily budget exceeded ($${budget.spent.toFixed(2)} / $${budget.limit.toFixed(2)})`,
+        spent_usd: budget.spent,
+        limit_usd: budget.limit,
+        remaining_usd: budget.remaining,
+      }),
+    );
+  }
+
+  private async executeTool(name: string, args: Record<string, unknown>): Promise<ToolExecutionResult> {
+    this.ensurePolicyAllowed(name);
+    this.ensureBudgetAllowed(name);
+
     switch (name) {
       case "xint_search": {
-        const tweets = await api.search(args.query, {
-          pages: Math.ceil((args.limit || 15) / 20),
+        const query = String(args.query || "");
+        const tweets = await api.search(query, {
+          pages: Math.ceil((Number(args.limit) || 15) / 20),
           sortOrder: (args.sort === "recent" ? "recency" : "relevancy") as any,
-          since: args.since,
+          since: typeof args.since === "string" ? args.since : undefined,
         });
         let results = tweets;
         if (args.noRetweets) {
@@ -253,61 +358,74 @@ class MCPServer {
         if (args.noReplies) {
           results = results.filter((t: any) => t.conversation_id === t.id);
         }
-        return results.slice(0, args.limit || 15);
+        trackCost("search", "/2/tweets/search/recent", tweets.length);
+        return { data: results.slice(0, Number(args.limit) || 15), fallbackUsed: false };
       }
 
       case "xint_profile": {
-        const { user, tweets } = await api.profile(args.username, {
-          count: args.count || 20,
-          includeReplies: args.includeReplies || false,
+        const username = String(args.username || "");
+        const count = Number(args.count) || 20;
+        const includeReplies = Boolean(args.includeReplies);
+        const { user, tweets } = await api.profile(username, {
+          count,
+          includeReplies,
         });
-        return { user, tweets: tweets.slice(0, args.count || 20) };
+        trackCost("profile", `/2/users/by/username/${username}`, tweets.length + 1);
+        return { data: { user, tweets: tweets.slice(0, count) }, fallbackUsed: false };
       }
 
       case "xint_thread": {
-        const tweetId = this.extractTweetId(args.tweetId);
-        const tweets = await api.thread(tweetId, { pages: args.pages || 2 });
-        return { tweets };
+        const tweetId = this.extractTweetId(String(args.tweetId || ""));
+        const pages = Number(args.pages) || 2;
+        const tweets = await api.thread(tweetId, { pages });
+        trackCost("thread", "/2/tweets/search/recent", tweets.length);
+        return { data: { tweets }, fallbackUsed: false };
       }
 
       case "xint_tweet": {
-        const tweetId = this.extractTweetId(args.tweetId);
-        return await api.getTweet(tweetId);
+        const tweetId = this.extractTweetId(String(args.tweetId || ""));
+        const tweet = await api.getTweet(tweetId);
+        trackCost("tweet", `/2/tweets/${tweetId}`, tweet ? 1 : 0);
+        return { data: tweet, fallbackUsed: false };
       }
 
       case "xint_article": {
         const { fetchArticle } = await import("./article");
-        return await fetchArticle(args.url, { full: args.full !== false });
+        const article = await fetchArticle(String(args.url || ""), { full: args.full !== false });
+        return { data: article, fallbackUsed: false };
       }
 
       case "xint_xsearch": {
-        return { note: "xSearch requires XAI_API_KEY" };
+        return { data: { note: "xSearch requires XAI_API_KEY" }, fallbackUsed: false };
       }
 
       case "xint_collections_list": {
-        return { note: "Collections requires XAI_API_KEY" };
+        return { data: { note: "Collections requires XAI_API_KEY" }, fallbackUsed: false };
       }
 
       case "xint_collections_search": {
-        return { note: "Collections requires XAI_API_KEY" };
+        return { data: { note: "Collections requires XAI_API_KEY" }, fallbackUsed: false };
       }
 
       case "xint_analyze": {
-        return { note: "Analyze requires XAI_API_KEY" };
+        return { data: { note: "Analyze requires XAI_API_KEY" }, fallbackUsed: false };
       }
 
       case "xint_trends": {
         const { fetchTrends } = await import("./trends");
-        return await fetchTrends(args.location || "worldwide", args.limit || 20);
+        const location = typeof args.location === "string" ? args.location : "worldwide";
+        const limit = Number(args.limit) || 20;
+        const trends = await fetchTrends(location, limit);
+        return { data: trends, fallbackUsed: trends.source === "search_fallback" };
       }
 
       case "xint_bookmarks": {
-        return { note: "Bookmarks requires OAuth - use xint bookmarks command" };
+        return { data: { note: "Bookmarks requires OAuth - use xint bookmarks command" }, fallbackUsed: false };
       }
 
       case "xint_cache_clear": {
         const removed = cache.clear();
-        return { cleared: removed };
+        return { data: { cleared: removed }, fallbackUsed: false };
       }
 
       default:
@@ -319,20 +437,24 @@ class MCPServer {
 // CLI entry point
 export async function cmdMCPServer(args: string[]) {
   const isSSE = args.includes("--sse");
+  const noBudget = args.includes("--no-budget-guard");
+  const policyArg = args.find((arg) => arg.startsWith("--policy="));
+  const policyMode = parsePolicyMode(policyArg?.split("=")[1] || process.env.XINT_POLICY_MODE);
   const portArg = args.find(a => a.startsWith("--port="));
   const port = portArg ? parseInt(portArg.split("=")[1]) : 3000;
 
   console.error("Starting xint MCP server...");
+  console.error(`Policy mode: ${policyMode} | Budget guard: ${noBudget ? "disabled" : "enabled"}`);
 
   if (isSSE) {
-    await runSSE(port);
+    await runSSE(port, { policyMode, enforceBudget: !noBudget });
   } else {
-    await runStdio();
+    await runStdio({ policyMode, enforceBudget: !noBudget });
   }
 }
 
-async function runStdio() {
-  const server = new MCPServer();
+async function runStdio(options: MCPServerOptions) {
+  const server = new MCPServer(options);
   
   const readline = await import("readline");
   const rl = readline.createInterface({
@@ -357,9 +479,9 @@ async function runStdio() {
   });
 }
 
-async function runSSE(port: number) {
+async function runSSE(port: number, options: MCPServerOptions) {
   const http = await import("http");
-  const server = new MCPServer();
+  const server = new MCPServer(options);
 
   const httpServer = http.createServer(async (req, res) => {
     if (req.url === "/sse") {

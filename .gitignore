@@ -12,6 +12,7 @@ data/cache/*.json
 # Personal data
 data/watchlist.json
 data/api-costs.json
+data/reliability-metrics.json
 data/exports/*.md
 data/exports/*.json
 data/snapshots/*.json

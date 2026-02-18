@@ -13,6 +13,7 @@ import type { Tweet } from "./api";
 import * as cache from "./cache";
 import { trackCost } from "./costs";
 import { buildOutputMeta, printJsonWithMeta } from "./output-meta";
+import { markCommandFallback } from "./reliability";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -489,6 +490,9 @@ export async function cmdTrends(args: string[]): Promise<void> {
   }
 
   const result = await fetchTrends(woeid, { noCache });
+  if (result.source === "search_fallback") {
+    markCommandFallback("trends");
+  }
 
   if (jsonOutput) {
     const isFallback = result.source === "search_fallback";
