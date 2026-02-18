@@ -17,8 +17,10 @@ SKIP_CHECKS=false
 FORCE=false
 AUTO_NOTES=true
 GENERATE_REPORT=true
+UPLOAD_REPORT_ASSET=true
 
 VERSION=""
+GENERATED_REPORT_FILE=""
 
 if [[ -n "${BASH_SOURCE[0]-}" ]]; then
   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -46,6 +48,7 @@ Options:
   --no-auto-notes  Disable GitHub auto-generated release notes
   --no-report      Disable release report generation
   --report-dir     Override output directory for release report markdown
+  --no-report-asset  Do not upload report markdown to GitHub release assets
   --allow-dirty    Allow release from repos with uncommitted changes
   --skip-checks    Skip preflight checks (tests/lint/build gates)
   --force          Continue even if preflight checks fail
@@ -570,6 +573,31 @@ create_github_release() {
   fi
 }
 
+upload_release_report_asset() {
+  local repo="$1"
+  local report_file="$2"
+
+  if [[ "$UPLOAD_REPORT_ASSET" != "true" || "$GENERATE_REPORT" != "true" ]]; then
+    return
+  fi
+
+  if [[ -z "$report_file" ]]; then
+    return
+  fi
+
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "Would upload release report asset for $repo: $report_file"
+    return
+  fi
+
+  if ! command -v gh >/dev/null 2>&1; then
+    warn "gh not found; skipping report asset upload for $repo"
+    return
+  fi
+
+  run gh release upload "$VERSION" "$report_file" --clobber --repo "$GITHUB_ORG/$repo"
+}
+
 repo_commit_lines_md() {
   local repo="$1"
   local range="$2"
@@ -653,12 +681,14 @@ generate_release_report() {
   local release_url_alt="$4"
   local report_file
   report_file="$REPORT_DIR/$VERSION.md"
+  GENERATED_REPORT_FILE=""
 
   if [[ "$GENERATE_REPORT" != "true" ]]; then
     return
   fi
 
   if [[ "$DRY_RUN" == "true" ]]; then
+    GENERATED_REPORT_FILE="$report_file"
     log "Would generate release report at $report_file"
     return
   fi
@@ -682,6 +712,7 @@ EOF
     append_repo_release_section "$report_file" "$REPO_NAME_ALT" "$previous_tag_alt" "$release_url_alt"
   fi
 
+  GENERATED_REPORT_FILE="$report_file"
   log "Release report generated: $report_file"
 }
 
@@ -707,6 +738,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-report)
       GENERATE_REPORT=false
+      ;;
+    --no-report-asset)
+      UPLOAD_REPORT_ASSET=false
       ;;
     --report-dir)
       shift
@@ -843,6 +877,11 @@ generate_release_report \
   "$PREVIOUS_TAG_ALT" \
   "$RELEASE_URL_PRIMARY" \
   "$RELEASE_URL_ALT"
+
+upload_release_report_asset "$REPO_NAME" "$GENERATED_REPORT_FILE"
+if [[ -n "$REPO_NAME_ALT" ]]; then
+  upload_release_report_asset "$REPO_NAME_ALT" "$GENERATED_REPORT_FILE"
+fi
 
 if [[ -z "${TWEET_DRAFT:-}" ]]; then
   if [[ "$USE_AUTO_NOTES" == "true" ]]; then
