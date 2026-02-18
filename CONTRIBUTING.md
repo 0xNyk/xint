@@ -14,7 +14,7 @@ Thanks for your interest in contributing!
 - Keep changes focused — one feature or fix per PR
 - Follow the existing code style (TypeScript, no semicolons in new code is fine, match the file you're editing)
 - Test your changes manually with real API calls before submitting
-- Don't commit `.env`, `data/oauth-tokens.json`, or `data/cache/` files
+- Don't commit local secret/config files or generated runtime data artifacts
 
 ## Architecture
 

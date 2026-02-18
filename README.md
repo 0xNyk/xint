@@ -33,7 +33,6 @@ Spiritual successor to [twint](https://github.com/twintproject/twint) (archived 
 ```bash
 git clone https://github.com/0xNyk/xint.git
 cd xint
-cp .env.example .env
 ```
 
 > **Requires:** [Bun](https://bun.sh) · [X API access](https://developer.x.com) (prepaid credits)
@@ -74,11 +73,8 @@ xint bm           # bookmarks
 
 ### 1. X API Key
 
-Copy `.env.example` to `.env`:
-
-```bash
-X_BEARER_TOKEN=your_bearer_token_here
-```
+Set a local bearer token in your shell or secret manager (do not commit credentials):
+- `X_BEARER_TOKEN`
 
 Get your bearer token from [developer.x.com](https://developer.x.com) → Your Apps → App Settings.
 
@@ -86,17 +82,13 @@ Get your bearer token from [developer.x.com](https://developer.x.com) → Your A
 
 For `analyze`, `report --sentiment`, and `article --ai`:
 
-```bash
-XAI_API_KEY=your_xai_key_here
-```
+- `XAI_API_KEY`
 
 ### 3. Optional: OAuth for Write Access
 
 For bookmarks, likes, lists, blocks/mutes, and follower tracking:
 
-```bash
-X_CLIENT_ID=your_oauth_client_id
-```
+- `X_CLIENT_ID`
 
 Run `xint auth setup` to complete OAuth flow.
 
@@ -317,7 +309,7 @@ xint costs week      # Last 7 days
 xint costs budget    # Show/set limits
 ```
 
-## Environment
+## Configuration Variables (Local Only)
 
 | Variable | Required | Description |
 |----------|----------|-------------|
