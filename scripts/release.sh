@@ -527,7 +527,9 @@ publish_clawdhub() {
   local claw_version
   claw_version="$(cargo_semver_version "$VERSION")"
   if command -v clawdhub >/dev/null 2>&1; then
-    run clawdhub publish "$(repo_path "$repo")" --slug "$repo" --version "$claw_version" --changelog "Release v$VERSION"
+    if ! run clawdhub publish "$(repo_path "$repo")" --slug "$repo" --version "$claw_version" --changelog "Release v$VERSION"; then
+      warn "ClawdHub publish failed for $repo; continuing release pipeline"
+    fi
   else
     warn "clawdhub not found; skipping"
   fi
@@ -535,8 +537,19 @@ publish_clawdhub() {
 
 publish_skillsh() {
   local repo="$1"
+  local npm_cache
+  npm_cache="${NPM_CONFIG_CACHE:-${npm_config_cache:-$ROOT_DIR/.cache/npm}}"
+
   if command -v npx >/dev/null 2>&1; then
-    run npx skills add "https://github.com/$GITHUB_ORG/$repo" --yes
+    if [[ "$DRY_RUN" == "true" ]]; then
+      run npx skills add "https://github.com/$GITHUB_ORG/$repo" --yes
+      return
+    fi
+
+    mkdir -p "$npm_cache"
+    if ! env npm_config_cache="$npm_cache" npx skills add "https://github.com/$GITHUB_ORG/$repo" --yes; then
+      warn "skills.sh publish failed for $repo; continuing release pipeline"
+    fi
   else
     warn "npx not found; skipping"
   fi
