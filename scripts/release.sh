@@ -291,6 +291,24 @@ update_cargo_toml_version() {
   mv "$tmp" "$path/Cargo.toml"
 }
 
+sync_cargo_lock() {
+  local repo="$1"
+  local path
+  path="$(repo_path "$repo")"
+
+  if [[ ! -f "$path/Cargo.toml" || ! -f "$path/Cargo.lock" ]]; then
+    return
+  fi
+
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "Would sync $repo/Cargo.lock via cargo metadata"
+    return
+  fi
+
+  command -v cargo >/dev/null 2>&1 || die "cargo is required to sync Cargo.lock for $repo"
+  run_in_repo "$repo" cargo metadata --format-version=1 --no-deps >/dev/null
+}
+
 cargo_semver_version() {
   local raw="$1"
   IFS='.' read -r -a parts <<< "$raw"
@@ -349,6 +367,7 @@ collect_release_files() {
 
   if [[ -f "$path/Cargo.toml" ]]; then
     update_cargo_toml_version "$repo"
+    sync_cargo_lock "$repo"
     out_ref+=("Cargo.toml")
     if [[ -f "$path/Cargo.lock" ]]; then
       out_ref+=("Cargo.lock")
