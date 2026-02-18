@@ -524,8 +524,10 @@ push_repo() {
 
 publish_clawdhub() {
   local repo="$1"
+  local claw_version
+  claw_version="$(cargo_semver_version "$VERSION")"
   if command -v clawdhub >/dev/null 2>&1; then
-    run clawdhub publish "$(repo_path "$repo")" --slug "$repo" --version "$VERSION" --changelog "Release v$VERSION"
+    run clawdhub publish "$(repo_path "$repo")" --slug "$repo" --version "$claw_version" --changelog "Release v$VERSION"
   else
     warn "clawdhub not found; skipping"
   fi
