@@ -27,3 +27,12 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+# Local AI tool folders
+.agent/
+.agents/
+.claude/
+.cline/
+.continue/
+.cursor/
+.windsurf/

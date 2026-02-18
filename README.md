@@ -361,12 +361,19 @@ Open source! See [CONTRIBUTING.md](CONTRIBUTING.md).
 # from xint/
 ./scripts/release.sh --dry-run --allow-dirty
 ./scripts/release.sh 2026.2.18.4 --allow-dirty --ai-skill
+# disable GitHub auto-generated notes if you want manual sections only
+./scripts/release.sh 2026.2.18.4 --no-auto-notes
 ```
 
 Optional path overrides:
 
 - `REPO_PATH_XINT` (defaults to current repo when running inside `xint`)
 - `REPO_PATH_XINT_RS` (defaults to sibling `../xint-rs` when present)
+
+Notes behavior:
+
+- Default: uses `gh release create --generate-notes`
+- Manual override: set any of `CHANGELOG_ADDED`, `CHANGELOG_CHANGED`, `CHANGELOG_FIXED`, `CHANGELOG_SECURITY`
 
 ## License
 

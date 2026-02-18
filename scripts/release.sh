@@ -15,6 +15,7 @@ DRY_RUN=false
 ALLOW_DIRTY=false
 SKIP_CHECKS=false
 FORCE=false
+AUTO_NOTES=true
 
 VERSION=""
 
@@ -40,6 +41,7 @@ Options:
   --ai-skill       Enable ClawdHub and skills.sh publishing
   --docs           Update README/changelog files when present
   --all            Enable --ai-skill and --docs
+  --no-auto-notes  Disable GitHub auto-generated release notes
   --allow-dirty    Allow release from repos with uncommitted changes
   --skip-checks    Skip preflight checks (tests/lint/build gates)
   --force          Continue even if preflight checks fail
@@ -476,6 +478,7 @@ publish_skillsh() {
 create_github_release() {
   local repo="$1"
   local notes="$2"
+  local use_auto_notes="$3"
   local branch
 
   if ! command -v gh >/dev/null 2>&1; then
@@ -485,11 +488,28 @@ create_github_release() {
 
   branch="$(git -C "$(repo_path "$repo")" rev-parse --abbrev-ref HEAD)"
 
-  run gh release create "$VERSION" \
-    --title "$repo $VERSION" \
-    --notes "$notes" \
-    --target "$branch" \
-    --repo "$GITHUB_ORG/$repo"
+  if [[ "$use_auto_notes" == "true" ]]; then
+    if [[ -n "$notes" ]]; then
+      run gh release create "$VERSION" \
+        --title "$repo $VERSION" \
+        --generate-notes \
+        --notes "$notes" \
+        --target "$branch" \
+        --repo "$GITHUB_ORG/$repo"
+    else
+      run gh release create "$VERSION" \
+        --title "$repo $VERSION" \
+        --generate-notes \
+        --target "$branch" \
+        --repo "$GITHUB_ORG/$repo"
+    fi
+  else
+    run gh release create "$VERSION" \
+      --title "$repo $VERSION" \
+      --notes "$notes" \
+      --target "$branch" \
+      --repo "$GITHUB_ORG/$repo"
+  fi
 }
 
 while [[ $# -gt 0 ]]; do
@@ -508,6 +528,9 @@ while [[ $# -gt 0 ]]; do
       PUBLISH_CLAWDHUB=true
       PUBLISH_SKILLSH=true
       UPDATE_DOCS=true
+      ;;
+    --no-auto-notes)
+      AUTO_NOTES=false
       ;;
     --allow-dirty)
       ALLOW_DIRTY=true
@@ -586,12 +609,24 @@ if [[ "$PUBLISH_SKILLSH" == "true" ]]; then
   fi
 fi
 
+CUSTOM_NOTES=false
+if [[ -n "${CHANGELOG_ADDED:-}" || -n "${CHANGELOG_CHANGED:-}" || -n "${CHANGELOG_FIXED:-}" || -n "${CHANGELOG_SECURITY:-}" ]]; then
+  CUSTOM_NOTES=true
+fi
+
 CHANGELOG_ADDED="${CHANGELOG_ADDED:-- Add release notes here}"
 CHANGELOG_CHANGED="${CHANGELOG_CHANGED:-- Add changed items here}"
 CHANGELOG_FIXED="${CHANGELOG_FIXED:-- Fix various bugs and improvements}"
 CHANGELOG_SECURITY="${CHANGELOG_SECURITY:-- None}"
 
-RELEASE_NOTES="### Added
+USE_AUTO_NOTES=false
+if [[ "$AUTO_NOTES" == "true" && "$CUSTOM_NOTES" != "true" ]]; then
+  USE_AUTO_NOTES=true
+fi
+
+RELEASE_NOTES=""
+if [[ "$USE_AUTO_NOTES" != "true" || "$CUSTOM_NOTES" == "true" ]]; then
+  RELEASE_NOTES="### Added
 $CHANGELOG_ADDED
 
 ### Changed
@@ -602,17 +637,24 @@ $CHANGELOG_FIXED
 
 ### Security
 $CHANGELOG_SECURITY"
+fi
 
 log "Creating GitHub releases"
-create_github_release "$REPO_NAME" "$RELEASE_NOTES"
+create_github_release "$REPO_NAME" "$RELEASE_NOTES" "$USE_AUTO_NOTES"
 if [[ -n "$REPO_NAME_ALT" ]]; then
-  create_github_release "$REPO_NAME_ALT" "$RELEASE_NOTES"
+  create_github_release "$REPO_NAME_ALT" "$RELEASE_NOTES" "$USE_AUTO_NOTES"
 fi
 
 if [[ -z "${TWEET_DRAFT:-}" ]]; then
-  TWEET_DRAFT="xint $VERSION is available.
+  if [[ "$USE_AUTO_NOTES" == "true" ]]; then
+    TWEET_DRAFT="xint $VERSION is available.
+
+See GitHub release notes for details."
+  else
+    TWEET_DRAFT="xint $VERSION is available.
 
 $CHANGELOG_CHANGED"
+  fi
 fi
 
 cat <<EOF_BANNER
