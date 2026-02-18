@@ -157,6 +157,11 @@ xint watch "@vitalikbuterin" -i 1m
 xint watch "breaking" -i 30s --webhook https://example.com/webhook
 ```
 
+Webhook safety:
+- Remote webhooks must use `https://`
+- `http://` is accepted only for localhost/loopback targets
+- Optional host allowlist: `XINT_WEBHOOK_ALLOWED_HOSTS=hooks.example.com,*.internal.example`
+
 Press `Ctrl+C` — shows session stats.
 
 ## Stream (Official Filtered Stream)

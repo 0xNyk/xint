@@ -10,6 +10,7 @@ import * as cache from "./cache";
 import * as fmt from "./format";
 import { trackCost, checkBudget } from "./costs";
 import { buildOutputMeta } from "./output-meta";
+import { validateWebhookUrl } from "./webhook-security";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -239,6 +240,10 @@ export async function cmdWatch(args: string[]): Promise<void> {
       }
       case "--webhook":
         webhook = args[++i];
+        if (!webhook) {
+          console.error("Error: --webhook requires a URL");
+          process.exit(1);
+        }
         break;
       case "--limit":
         limit = parseInt(args[++i] || "10");
@@ -283,6 +288,15 @@ export async function cmdWatch(args: string[]): Promise<void> {
     query += " -is:retweet";
   }
 
+  if (webhook) {
+    try {
+      webhook = validateWebhookUrl(webhook);
+    } catch (err: any) {
+      console.error(`Error: ${err?.message || String(err)}`);
+      process.exit(1);
+    }
+  }
+
   await watch(query, { interval, webhook, limit, since, quiet, jsonl, stream });
 }
 
@@ -295,17 +309,22 @@ only new tweets since the last check.
 
 Options:
   --interval, -i <dur>   Polling interval: 30s, 5m, 1h (default: 5m)
-  --webhook <url>        POST new tweets to this URL as JSON
+  --webhook <url>        POST new tweets to this URL as JSON (https:// required)
   --limit <N>            Max tweets to show per poll (default: 10)
   --since <dur>          Initial time window to seed from (default: 1h)
   --quiet, -q            Suppress per-poll headers
   --jsonl                Output JSONL (one tweet per line)
   --stream, -s           Output SSE (Server-Sent Events)
 
+Webhook security:
+  - Remote webhooks must use https://
+  - http:// is allowed only for localhost/127.0.0.1/::1
+  - Optional host allowlist: XINT_WEBHOOK_ALLOWED_HOSTS=hooks.example.com,*.internal.example
+
 Examples:
   xint watch "solana memecoins" --interval 5m
   xint watch "@vitalikbuterin" --interval 1m
-  xint watch "AI agents" -i 30s --webhook https://hooks.slack.com/...
+  xint watch "AI agents" -i 30s --webhook https://hooks.example.com/ingest
   xint watch "breaking news" --jsonl | tee -a feed.jsonl
   xint watch "AI news" --stream | sse-consumer
 `);

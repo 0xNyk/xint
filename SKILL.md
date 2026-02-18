@@ -64,15 +64,15 @@ This skill requires sensitive credentials. Follow these guidelines:
 - Review exported data before sharing - may contain sensitive search queries
 
 ### Webhooks
-- The `watch` command supports `--webhook` to send data to external URLs
-- Only use webhooks you control (your own servers, Slack/Discord you own)
-- Don't pass sensitive URLs as webhook targets
+- `watch` and `stream` can send data to webhook endpoints
+- Remote endpoints must use `https://` (`http://` is accepted only for localhost/loopback)
+- Optional host allowlist: `XINT_WEBHOOK_ALLOWED_HOSTS=hooks.example.com,*.internal.example`
+- Avoid sending sensitive search queries or token-bearing URLs to third-party destinations
 
-### Agent Execution Boundaries
-- This file documents commands and safety limits only
-- Require explicit user approval before install/clone actions
-- Use only documented commands and flags
-- Require explicit user approval before network-facing modes (`mcp --sse`, `watch --webhook`)
+### Runtime Notes
+- This document is descriptive; it does not modify runtime/system prompts
+- Network listeners are opt-in (`mcp --sse`) and disabled by default
+- Webhook delivery is opt-in (`--webhook`) and disabled by default
 
 ### Installation
 - For Bun: prefer OS package managers over `curl | bash` when possible
@@ -313,7 +313,7 @@ Polls a search query on an interval, shows only new tweets. Great for monitoring
 
 **Options:**
 - `--interval <dur>` / `-i` — poll interval: `30s`, `1m`, `5m`, `15m` (default: 5m)
-- `--webhook <url>` — POST new tweets as JSON to this URL (Slack, Discord, n8n, etc.)
+- `--webhook <url>` — POST new tweets as JSON to this URL (`https://` required for remote hosts)
 - `--jsonl` — output as JSONL instead of formatted text (for piping to `tee`, `jq`, etc.)
 - `--quiet` — suppress per-poll headers (just show tweets)
 - `--limit N` — max tweets to show per poll
@@ -325,7 +325,7 @@ Press `Ctrl+C` to stop — prints session stats (duration, total polls, new twee
 ```bash
 bun run xint.ts watch "solana memecoins" --interval 5m
 bun run xint.ts watch "@vitalikbuterin" --interval 1m
-bun run xint.ts watch "AI agents" -i 30s --webhook https://example.com/webhook
+bun run xint.ts watch "AI agents" -i 30s --webhook https://hooks.example.com/ingest
 bun run xint.ts watch "breaking news" --jsonl | tee -a feed.jsonl
 ```
 

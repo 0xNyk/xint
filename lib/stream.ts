@@ -11,6 +11,7 @@ import * as api from "./api";
 import * as fmt from "./format";
 import { checkBudget, trackCost } from "./costs";
 import { buildOutputMeta } from "./output-meta";
+import { validateWebhookUrl } from "./webhook-security";
 
 interface StreamOptions {
   json?: boolean;
@@ -87,8 +88,13 @@ Options:
   --jsonl                Output compact JSONL per event
   --max-events N         Stop after N tweet events
   --backfill N           Backfill 1-5 minutes (X API option)
-  --webhook <url>        POST each event payload to webhook
+  --webhook <url>        POST each event payload to webhook (https:// required)
   --quiet, -q            Suppress stream status logs
+
+Webhook security:
+  - Remote webhooks must use https://
+  - http:// is allowed only for localhost/127.0.0.1/::1
+  - Optional host allowlist: XINT_WEBHOOK_ALLOWED_HOSTS=hooks.example.com,*.internal.example
 
 Examples:
   xint stream
@@ -310,6 +316,10 @@ export async function cmdStream(args: string[]): Promise<void> {
 
   if (json && jsonl) {
     throw new Error("Use only one of --json or --jsonl.");
+  }
+
+  if (webhook) {
+    webhook = validateWebhookUrl(webhook);
   }
 
   await runStream({ json, jsonl, quiet, maxEvents, backfillMinutes, webhook });

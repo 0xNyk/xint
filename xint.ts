@@ -801,7 +801,7 @@ Search options:
 
 Watch options:
   --interval, -i <dur>       Polling interval: 30s, 5m, 1h (default: 5m)
-  --webhook <url>            POST new tweets to this URL as JSON
+  --webhook <url>            POST new tweets to this URL as JSON (https:// required for remote hosts)
   --limit <N>                Max tweets per poll (default: 10)
   --since <dur>              Initial seed window (default: 1h)
   --quiet, -q                Suppress per-poll headers
@@ -812,7 +812,7 @@ Stream options:
   --jsonl                    Output JSONL per stream event
   --max-events N             Stop after N events
   --backfill N               Backfill 1-5 minutes (X API option)
-  --webhook <url>            POST event payloads to URL
+  --webhook <url>            POST event payloads to URL (https:// required for remote hosts)
   --quiet, -q                Suppress stream status logs
 
 Stream rules options:
