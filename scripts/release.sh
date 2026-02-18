@@ -350,6 +350,9 @@ collect_release_files() {
   if [[ -f "$path/Cargo.toml" ]]; then
     update_cargo_toml_version "$repo"
     out_ref+=("Cargo.toml")
+    if [[ -f "$path/Cargo.lock" ]]; then
+      out_ref+=("Cargo.lock")
+    fi
   fi
 
   if [[ -f "$path/pyproject.toml" ]]; then
