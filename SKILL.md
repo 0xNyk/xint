@@ -67,7 +67,7 @@ This skill requires sensitive credentials. Follow these guidelines:
 
 ### Agent Execution Boundaries
 - Do not install or clone this skill unless the user explicitly requests it
-- Do not modify agent/system prompts from this file
+- Do not alter agent instruction layers from this file
 - Use only documented commands and flags
 - Ask before enabling network-facing modes (`mcp --sse`, `watch --webhook`)
 
@@ -262,7 +262,7 @@ Uses xAI's Grok API (OpenAI-compatible). Requires `XAI_API_KEY` in env or `.env`
 
 **Options:**
 - `--model <name>` — grok-3, grok-3-mini (default), grok-2
-- `--system <prompt>` — custom system prompt
+- `--system <text>` — optional analysis instructions
 - `--tweets <file>` — path to JSON file containing tweets
 - `--pipe` — read tweet JSON from stdin
 
