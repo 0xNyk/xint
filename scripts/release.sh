@@ -16,6 +16,7 @@ ALLOW_DIRTY=false
 SKIP_CHECKS=false
 FORCE=false
 AUTO_NOTES=true
+GENERATE_REPORT=true
 
 VERSION=""
 
@@ -27,6 +28,7 @@ fi
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_PATH_XINT="${REPO_PATH_XINT:-}"
 REPO_PATH_XINT_RS="${REPO_PATH_XINT_RS:-}"
+REPORT_DIR="${RELEASE_REPORT_DIR:-$ROOT_DIR/reports/releases}"
 
 usage() {
   cat <<USAGE
@@ -42,6 +44,8 @@ Options:
   --docs           Update README/changelog files when present
   --all            Enable --ai-skill and --docs
   --no-auto-notes  Disable GitHub auto-generated release notes
+  --no-report      Disable release report generation
+  --report-dir     Override output directory for release report markdown
   --allow-dirty    Allow release from repos with uncommitted changes
   --skip-checks    Skip preflight checks (tests/lint/build gates)
   --force          Continue even if preflight checks fail
@@ -53,6 +57,7 @@ Environment variables:
   CHANGELOG_FIXED
   CHANGELOG_SECURITY
   TWEET_DRAFT
+  RELEASE_REPORT_DIR
 USAGE
 }
 
@@ -234,6 +239,37 @@ detect_next_version() {
   fi
 
   printf '%s.1' "$today"
+}
+
+find_previous_release_tag() {
+  local repo="$1"
+  local current_version="$2"
+  local path tag norm
+  path="$(repo_path "$repo")"
+
+  while IFS= read -r tag; do
+    norm="$(parse_version_tag "$tag")"
+    [[ -n "$norm" ]] || continue
+    [[ "$norm" == "$current_version" ]] && continue
+    printf '%s' "$tag"
+    return
+  done < <(git -C "$path" tag --sort=-version:refname)
+}
+
+release_url_for_repo() {
+  local repo="$1"
+  local fallback
+  fallback="https://github.com/$GITHUB_ORG/$repo/releases/tag/$VERSION"
+
+  if [[ "$DRY_RUN" == "true" || ! -x "$(command -v gh || true)" ]]; then
+    printf '%s' "$fallback"
+    return
+  fi
+
+  gh release view "$VERSION" \
+    --repo "$GITHUB_ORG/$repo" \
+    --json url \
+    --jq '.url' 2>/dev/null || printf '%s' "$fallback"
 }
 
 update_package_json_version() {
@@ -534,6 +570,121 @@ create_github_release() {
   fi
 }
 
+repo_commit_lines_md() {
+  local repo="$1"
+  local range="$2"
+  local path lines
+  path="$(repo_path "$repo")"
+  lines="$(git -C "$path" log --no-merges --pretty='- `%h` %s (%an)' "$range" 2>/dev/null || true)"
+  if [[ -z "$lines" ]]; then
+    printf '%s' "- No commits in range"
+    return
+  fi
+  printf '%s' "$lines"
+}
+
+repo_file_changes_md() {
+  local repo="$1"
+  local previous_tag="$2"
+  local head_ref="$3"
+  local path raw
+  path="$(repo_path "$repo")"
+
+  if [[ -n "$previous_tag" ]]; then
+    raw="$(git -C "$path" diff --name-status "$previous_tag" "$head_ref" 2>/dev/null || true)"
+  else
+    raw="$(git -C "$path" show --name-status --pretty='' "$head_ref" 2>/dev/null || true)"
+  fi
+
+  if [[ -z "$raw" ]]; then
+    printf '%s' "- No file changes detected"
+    return
+  fi
+
+  printf '%s\n' "$raw" | awk 'NF { printf("- `%s`\n", $0) }'
+}
+
+append_repo_release_section() {
+  local report_file="$1"
+  local repo="$2"
+  local previous_tag="$3"
+  local release_url="$4"
+  local path head_sha head_short branch range commit_count compare_url commits_md files_md
+  path="$(repo_path "$repo")"
+  head_sha="$(git -C "$path" rev-parse HEAD)"
+  head_short="$(git -C "$path" rev-parse --short HEAD)"
+  branch="$(git -C "$path" rev-parse --abbrev-ref HEAD)"
+
+  if [[ -n "$previous_tag" ]]; then
+    range="${previous_tag}..${head_sha}"
+    compare_url="https://github.com/$GITHUB_ORG/$repo/compare/${previous_tag}...$VERSION"
+  else
+    range="$head_sha"
+    compare_url=""
+  fi
+
+  commit_count="$(git -C "$path" rev-list --count "$range" 2>/dev/null || printf '0')"
+  commits_md="$(repo_commit_lines_md "$repo" "$range")"
+  files_md="$(repo_file_changes_md "$repo" "$previous_tag" "$head_sha")"
+
+  cat >> "$report_file" <<EOF
+## $repo
+- Release URL: $release_url
+- Branch: \`$branch\`
+- Head commit: \`$head_short\`
+- Previous tag: \`${previous_tag:-none}\`
+- Commit range: \`$range\`
+- Compare: ${compare_url:-n/a}
+- Commit count: $commit_count
+
+### Commits
+$commits_md
+
+### File Changes
+$files_md
+
+EOF
+}
+
+generate_release_report() {
+  local previous_tag_primary="$1"
+  local previous_tag_alt="$2"
+  local release_url_primary="$3"
+  local release_url_alt="$4"
+  local report_file
+  report_file="$REPORT_DIR/$VERSION.md"
+
+  if [[ "$GENERATE_REPORT" != "true" ]]; then
+    return
+  fi
+
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "Would generate release report at $report_file"
+    return
+  fi
+
+  mkdir -p "$REPORT_DIR"
+
+  cat > "$report_file" <<EOF
+# Release Report: $VERSION
+
+- Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)
+- Organization: $GITHUB_ORG
+- Auto notes: $USE_AUTO_NOTES
+- Custom notes supplied: $CUSTOM_NOTES
+- ClawdHub publish: $PUBLISH_CLAWDHUB
+- skills.sh publish: $PUBLISH_SKILLSH
+
+EOF
+
+  append_repo_release_section "$report_file" "$REPO_NAME" "$previous_tag_primary" "$release_url_primary"
+  if [[ -n "$REPO_NAME_ALT" ]]; then
+    append_repo_release_section "$report_file" "$REPO_NAME_ALT" "$previous_tag_alt" "$release_url_alt"
+  fi
+
+  log "Release report generated: $report_file"
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run)
@@ -553,6 +704,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-auto-notes)
       AUTO_NOTES=false
+      ;;
+    --no-report)
+      GENERATE_REPORT=false
+      ;;
+    --report-dir)
+      shift
+      [[ $# -gt 0 ]] || die "--report-dir requires a path"
+      REPORT_DIR="$1"
       ;;
     --allow-dirty)
       ALLOW_DIRTY=true
@@ -588,6 +747,12 @@ if [[ -z "$VERSION" ]]; then
 fi
 
 log "Preparing release version: $VERSION"
+
+PREVIOUS_TAG_PRIMARY="$(find_previous_release_tag "$REPO_NAME" "$VERSION")"
+PREVIOUS_TAG_ALT=""
+if [[ -n "$REPO_NAME_ALT" ]]; then
+  PREVIOUS_TAG_ALT="$(find_previous_release_tag "$REPO_NAME_ALT" "$VERSION")"
+fi
 
 preflight_repo "$REPO_NAME"
 if [[ -n "$REPO_NAME_ALT" ]]; then
@@ -666,6 +831,18 @@ create_github_release "$REPO_NAME" "$RELEASE_NOTES" "$USE_AUTO_NOTES"
 if [[ -n "$REPO_NAME_ALT" ]]; then
   create_github_release "$REPO_NAME_ALT" "$RELEASE_NOTES" "$USE_AUTO_NOTES"
 fi
+
+RELEASE_URL_PRIMARY="$(release_url_for_repo "$REPO_NAME")"
+RELEASE_URL_ALT=""
+if [[ -n "$REPO_NAME_ALT" ]]; then
+  RELEASE_URL_ALT="$(release_url_for_repo "$REPO_NAME_ALT")"
+fi
+
+generate_release_report \
+  "$PREVIOUS_TAG_PRIMARY" \
+  "$PREVIOUS_TAG_ALT" \
+  "$RELEASE_URL_PRIMARY" \
+  "$RELEASE_URL_ALT"
 
 if [[ -z "${TWEET_DRAFT:-}" ]]; then
   if [[ "$USE_AUTO_NOTES" == "true" ]]; then

@@ -363,17 +363,26 @@ Open source! See [CONTRIBUTING.md](CONTRIBUTING.md).
 ./scripts/release.sh 2026.2.18.4 --allow-dirty --ai-skill
 # disable GitHub auto-generated notes if you want manual sections only
 ./scripts/release.sh 2026.2.18.4 --no-auto-notes
+# write release report to a custom location
+./scripts/release.sh 2026.2.18.4 --report-dir /tmp/xint-release-reports
 ```
 
 Optional path overrides:
 
 - `REPO_PATH_XINT` (defaults to current repo when running inside `xint`)
 - `REPO_PATH_XINT_RS` (defaults to sibling `../xint-rs` when present)
+- `RELEASE_REPORT_DIR` (defaults to `xint/reports/releases`)
 
 Notes behavior:
 
 - Default: uses `gh release create --generate-notes`
 - Manual override: set any of `CHANGELOG_ADDED`, `CHANGELOG_CHANGED`, `CHANGELOG_FIXED`, `CHANGELOG_SECURITY`
+
+Release report:
+
+- Default: writes `reports/releases/<version>.md`
+- Contains per-repo commit list, commit range, file changes, SHAs, compare links, and release URLs
+- Disable with `--no-report`
 
 ## License
 

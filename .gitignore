@@ -16,6 +16,7 @@ data/reliability-metrics.json
 data/exports/*.md
 data/exports/*.json
 data/snapshots/*.json
+reports/releases/*.md
 
 # Dependencies
 node_modules/
