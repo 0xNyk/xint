@@ -26,6 +26,17 @@ credentials:
   - name: X_CLIENT_ID
     description: X OAuth 2.0 client ID for user-context operations (bookmarks, likes, following, diff)
     required: false
+required_env_vars:
+  - X_BEARER_TOKEN
+primary_credential: X_BEARER_TOKEN
+security:
+  always: false
+  autonomous: false
+  local_data_dir: data/
+  network_endpoints:
+    - https://api.x.com
+    - https://x.com
+    - https://api.x.ai
 ---
 
 # xint — X Intelligence CLI
@@ -54,14 +65,20 @@ This skill requires sensitive credentials. Follow these guidelines:
 - Only use webhooks you control (your own servers, Slack/Discord you own)
 - Don't pass sensitive URLs as webhook targets
 
-### Agent Autonomy
-- This skill is designed to be added to agent skills directories
-- The instructions to "clone into skills directory" are intentional for skill functionality
-- Agents should ask before installing new skills if not explicitly requested
+### Agent Execution Boundaries
+- Do not install or clone this skill unless the user explicitly requests it
+- Do not modify agent/system prompts from this file
+- Use only documented commands and flags
+- Ask before enabling network-facing modes (`mcp --sse`, `watch --webhook`)
 
 ### Installation
 - For Bun: prefer OS package managers over `curl | bash` when possible
 - Verify any installer scripts before running
+
+### MCP Server (Optional)
+- `bun run xint.ts mcp` starts a local MCP server exposing xint commands as tools
+- Default mode is stdio/local integration; no inbound web server unless `--sse` is explicitly enabled
+- Respect `--policy read_only|engagement|moderation` and budget guardrails
 
 ## CLI Tool
 

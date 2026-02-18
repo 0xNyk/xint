@@ -8,7 +8,7 @@ REPO_NAME="xint"
 REPO_NAME_ALT="xint-rs"
 GITHUB_ORG="0xNyk"
 
-PUBLISH_CLAWDHUB=false
+PUBLISH_CLAWDHUB=true
 PUBLISH_SKILLSH=false
 UPDATE_DOCS=false
 DRY_RUN=false
@@ -43,7 +43,9 @@ Version format:
 
 Options:
   --dry-run        Preview release actions without mutating repos
-  --ai-skill       Enable ClawdHub and skills.sh publishing
+  --ai-skill       Enable both ClawdHub and skills.sh publishing
+  --no-clawdhub    Disable ClawdHub publishing for this run
+  --skillsh        Enable skills.sh publishing
   --docs           Update README/changelog files when present
   --all            Enable --ai-skill and --docs
   --no-auto-notes  Disable GitHub auto-generated release notes
@@ -777,6 +779,12 @@ while [[ $# -gt 0 ]]; do
       ;;
     --ai-skill)
       PUBLISH_CLAWDHUB=true
+      PUBLISH_SKILLSH=true
+      ;;
+    --no-clawdhub)
+      PUBLISH_CLAWDHUB=false
+      ;;
+    --skillsh)
       PUBLISH_SKILLSH=true
       ;;
     --docs)

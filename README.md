@@ -360,7 +360,11 @@ Open source! See [CONTRIBUTING.md](CONTRIBUTING.md).
 ```bash
 # from xint/
 ./scripts/release.sh --dry-run --allow-dirty
-./scripts/release.sh 2026.2.18.4 --allow-dirty --ai-skill
+./scripts/release.sh 2026.2.18.4 --allow-dirty
+# disable default ClawdHub publish for one run
+./scripts/release.sh 2026.2.18.4 --no-clawdhub
+# enable skills.sh as well
+./scripts/release.sh 2026.2.18.4 --skillsh
 # disable GitHub auto-generated notes if you want manual sections only
 ./scripts/release.sh 2026.2.18.4 --no-auto-notes
 # write release report to a custom location
@@ -377,6 +381,8 @@ Notes behavior:
 
 - Default: uses `gh release create --generate-notes`
 - Manual override: set any of `CHANGELOG_ADDED`, `CHANGELOG_CHANGED`, `CHANGELOG_FIXED`, `CHANGELOG_SECURITY`
+- Default: publishes to ClawdHub when `clawdhub` CLI is available (disable with `--no-clawdhub`)
+- Optional: publish to skills.sh with `--skillsh` (or `--ai-skill` for both)
 
 Release report:
 
