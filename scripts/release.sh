@@ -344,12 +344,12 @@ sync_cargo_lock() {
   fi
 
   if [[ "$DRY_RUN" == "true" ]]; then
-    log "Would sync $repo/Cargo.lock via cargo metadata"
+    log "Would sync $repo/Cargo.lock via cargo check"
     return
   fi
 
   command -v cargo >/dev/null 2>&1 || die "cargo is required to sync Cargo.lock for $repo"
-  run_in_repo "$repo" cargo metadata --format-version=1 --no-deps >/dev/null
+  run_in_repo "$repo" cargo check --quiet >/dev/null
 }
 
 cargo_semver_version() {
