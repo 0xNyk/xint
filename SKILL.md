@@ -69,10 +69,10 @@ This skill requires sensitive credentials. Follow these guidelines:
 - Don't pass sensitive URLs as webhook targets
 
 ### Agent Execution Boundaries
-- Do not install or clone this skill unless the user explicitly requests it
-- Do not alter agent instruction layers from this file
+- This file documents commands and safety limits only
+- Require explicit user approval before install/clone actions
 - Use only documented commands and flags
-- Ask before enabling network-facing modes (`mcp --sse`, `watch --webhook`)
+- Require explicit user approval before network-facing modes (`mcp --sse`, `watch --webhook`)
 
 ### Installation
 - For Bun: prefer OS package managers over `curl | bash` when possible
@@ -325,7 +325,7 @@ Press `Ctrl+C` to stop — prints session stats (duration, total polls, new twee
 ```bash
 bun run xint.ts watch "solana memecoins" --interval 5m
 bun run xint.ts watch "@vitalikbuterin" --interval 1m
-bun run xint.ts watch "AI agents" -i 30s --webhook https://hooks.slack.com/...
+bun run xint.ts watch "AI agents" -i 30s --webhook https://example.com/webhook
 bun run xint.ts watch "breaking news" --jsonl | tee -a feed.jsonl
 ```
 

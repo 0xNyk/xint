@@ -5,7 +5,7 @@ Thanks for your interest in contributing!
 ## Getting Started
 
 1. Fork and clone the repo
-2. Copy `.env.example` to `.env` and add your API keys
+2. Configure required environment variables locally (see README)
 3. Install [Bun](https://bun.sh) if you haven't already
 4. Run `bun run xint.ts --help` to verify everything works
 

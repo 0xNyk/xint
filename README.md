@@ -154,7 +154,7 @@ xint watch "solana" --interval 5m
 xint watch "@vitalikbuterin" -i 1m
 
 # Webhook to Slack
-xint watch "breaking" -i 30s --webhook https://hooks.slack.com/...
+xint watch "breaking" -i 30s --webhook https://example.com/webhook
 ```
 
 Press `Ctrl+C` — shows session stats.

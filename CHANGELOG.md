@@ -41,17 +41,17 @@ Major feature release focused on real-time intelligence, social graph tracking, 
 - **Grok AI analysis** — `analyze` command powered by xAI (grok-3, grok-3-mini, grok-2)
 - **Cost management** — per-call tracking, daily budgets, weekly/monthly reports
 - **Full-archive search** — `--full` flag for searching back to 2006
-- **`package.json`**, **`tsconfig.json`**, **`.env.example`** — proper project scaffolding
+- **`package.json`**, **`tsconfig.json`**, and environment template file — proper project scaffolding
 - **`CONTRIBUTING.md`** — contribution guide
 
 ### Changed
 - **Renamed** `x-search.ts` to `xint.ts`, `x-research` to `xint` throughout
-- **Generalized env paths** — no more hardcoded server paths; reads from `.env` at project root
+- **Generalized environment configuration** — removed machine-specific assumptions; reads config from project root
 - **Save location** — `--save` now writes to `data/exports/` (was `data/exports/`)
 - **Community-ready README** — badges, command table, OAuth guide, Grok docs, cost reference
 
 ### Removed
-- Hardcoded paths to `/home/openclaw/`, `~/.config/env/global.env`, `~/.openclaw/.env`
+- Hardcoded machine-specific filesystem paths removed
 - Personal usernames and server-specific references
 
 ---
