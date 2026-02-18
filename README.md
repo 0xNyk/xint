@@ -383,6 +383,7 @@ Release report:
 - Default: writes `reports/releases/<version>.md`
 - Contains per-repo commit list, commit range, file changes, SHAs, compare links, and release URLs
 - Uploaded automatically to both GitHub releases as an asset (can disable with `--no-report-asset`)
+- Embedded automatically in both GitHub release bodies (can disable with `--no-report-body`)
 - Disable with `--no-report`
 
 ## License

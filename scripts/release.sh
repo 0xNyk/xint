@@ -18,6 +18,7 @@ FORCE=false
 AUTO_NOTES=true
 GENERATE_REPORT=true
 UPLOAD_REPORT_ASSET=true
+EMBED_REPORT_BODY=true
 
 VERSION=""
 GENERATED_REPORT_FILE=""
@@ -49,6 +50,7 @@ Options:
   --no-report      Disable release report generation
   --report-dir     Override output directory for release report markdown
   --no-report-asset  Do not upload report markdown to GitHub release assets
+  --no-report-body  Do not embed report markdown in GitHub release body
   --allow-dirty    Allow release from repos with uncommitted changes
   --skip-checks    Skip preflight checks (tests/lint/build gates)
   --force          Continue even if preflight checks fail
@@ -598,6 +600,58 @@ upload_release_report_asset() {
   run gh release upload "$VERSION" "$report_file" --clobber --repo "$GITHUB_ORG/$repo"
 }
 
+embed_release_report_in_body() {
+  local repo="$1"
+  local report_file="$2"
+  local start_marker end_marker current_body cleaned_body new_body tmp
+  start_marker="<!-- xint-release-report:start -->"
+  end_marker="<!-- xint-release-report:end -->"
+
+  if [[ "$EMBED_REPORT_BODY" != "true" || "$GENERATE_REPORT" != "true" ]]; then
+    return
+  fi
+
+  if [[ -z "$report_file" ]]; then
+    return
+  fi
+
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "Would embed release report in body for $repo from $report_file"
+    return
+  fi
+
+  if ! command -v gh >/dev/null 2>&1; then
+    warn "gh not found; skipping release body report embed for $repo"
+    return
+  fi
+
+  current_body="$(gh release view "$VERSION" --repo "$GITHUB_ORG/$repo" --json body --jq '.body' 2>/dev/null || true)"
+  cleaned_body="$(printf '%s\n' "$current_body" | awk -v start="$start_marker" -v end="$end_marker" '
+    $0 == start { skip = 1; next }
+    $0 == end { skip = 0; next }
+    !skip { print }
+  ')"
+
+  new_body="$cleaned_body
+
+$start_marker
+## Detailed Release Report
+
+<details>
+<summary>Expand full report</summary>
+
+$(cat "$report_file")
+
+</details>
+$end_marker
+"
+
+  tmp="$(mktemp)"
+  printf '%s\n' "$new_body" > "$tmp"
+  run gh release edit "$VERSION" --repo "$GITHUB_ORG/$repo" --notes-file "$tmp"
+  rm -f "$tmp"
+}
+
 repo_commit_lines_md() {
   local repo="$1"
   local range="$2"
@@ -742,6 +796,9 @@ while [[ $# -gt 0 ]]; do
     --no-report-asset)
       UPLOAD_REPORT_ASSET=false
       ;;
+    --no-report-body)
+      EMBED_REPORT_BODY=false
+      ;;
     --report-dir)
       shift
       [[ $# -gt 0 ]] || die "--report-dir requires a path"
@@ -881,6 +938,11 @@ generate_release_report \
 upload_release_report_asset "$REPO_NAME" "$GENERATED_REPORT_FILE"
 if [[ -n "$REPO_NAME_ALT" ]]; then
   upload_release_report_asset "$REPO_NAME_ALT" "$GENERATED_REPORT_FILE"
+fi
+
+embed_release_report_in_body "$REPO_NAME" "$GENERATED_REPORT_FILE"
+if [[ -n "$REPO_NAME_ALT" ]]; then
+  embed_release_report_in_body "$REPO_NAME_ALT" "$GENERATED_REPORT_FILE"
 fi
 
 if [[ -z "${TWEET_DRAFT:-}" ]]; then
