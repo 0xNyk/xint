@@ -28,7 +28,10 @@ credentials:
     required: false
 required_env_vars:
   - X_BEARER_TOKEN
+requiredEnvVars:
+  - X_BEARER_TOKEN
 primary_credential: X_BEARER_TOKEN
+primaryCredential: X_BEARER_TOKEN
 security:
   always: false
   autonomous: false
@@ -82,7 +85,7 @@ This skill requires sensitive credentials. Follow these guidelines:
 
 ## CLI Tool
 
-All commands run from this skill directory:
+All commands run from the project directory:
 
 ```bash
 # Set your environment variables
@@ -153,7 +156,7 @@ bun run xint.ts tweet <tweet_id> [--json]
 ### Article (Full Content Fetcher)
 
 ```bash
-bun run xint.ts article <url> [--json] [--full] [--ai <prompt>]
+bun run xint.ts article <url> [--json] [--full] [--ai <text>]
 ```
 
 Fetches and extracts full article content from any URL using xAI's web_search tool (Grok reads the page). Returns clean text with title, author, date, and word count. Requires `XAI_API_KEY`.
@@ -164,7 +167,7 @@ Also supports X tweet URLs — automatically extracts the linked article from th
 - `--json` — structured JSON output (title, content, author, published, wordCount, ttr)
 - `--full` — return full article text without truncation (default truncates to ~5000 chars)
 - `--model <name>` — Grok model (default: grok-4)
-- `--ai <prompt>` — analyze article with Grok AI (passes content to analyze command)
+- `--ai <text>` — analyze article with Grok AI (passes content to analyze command)
 
 **Examples:**
 ```bash
@@ -262,7 +265,6 @@ Uses xAI's Grok API (OpenAI-compatible). Requires `XAI_API_KEY` in env or `.env`
 
 **Options:**
 - `--model <name>` — grok-3, grok-3-mini (default), grok-2
-- `--system <text>` — optional analysis instructions
 - `--tweets <file>` — path to JSON file containing tweets
 - `--pipe` — read tweet JSON from stdin
 
@@ -280,10 +282,8 @@ For “recent sentiment / what X is saying” without using cookies/GraphQL, use
 Script:
 
 ```bash
-python3 /home/openclaw/.openclaw/skills/xint/scripts/xai_x_search_scan.py --help
+python3 scripts/xai_x_search_scan.py --help
 ```
-
-Jarv cron uses it with query packs in `workspace-jarv/x-signals/x-search-queries.json`.
 
 ## xAI Collections Knowledge Base (Files + Collections)
 
@@ -292,7 +292,7 @@ Store first-party artifacts (reports, logs) in xAI Collections and semantic-sear
 Script:
 
 ```bash
-python3 /home/openclaw/.openclaw/skills/xint/scripts/xai_collections.py --help
+python3 scripts/xai_collections.py --help
 ```
 
 Env:
