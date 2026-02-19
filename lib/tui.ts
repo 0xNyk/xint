@@ -10,6 +10,12 @@ type MenuOption = {
   hint: string;
 };
 
+type CommandMeta = {
+  summary: string;
+  example: string;
+  costHint: string;
+};
+
 type SessionState = {
   lastSearch?: string;
   lastLocation?: string;
@@ -33,6 +39,8 @@ type DashboardTab = "commands" | "output" | "help";
 type UiState = {
   activeIndex: number;
   tab: DashboardTab;
+  outputOffset: number;
+  outputSearch: string;
 };
 
 const MENU_OPTIONS: MenuOption[] = [
@@ -45,6 +53,44 @@ const MENU_OPTIONS: MenuOption[] = [
   { key: "0", label: "Exit", aliases: ["exit", "quit", "q"], hint: "close interactive mode" },
 ];
 
+const COMMAND_META: Record<string, CommandMeta> = {
+  "1": {
+    summary: "Discover relevant posts with ranked result quality.",
+    example: 'xint search "open-source ai agents"',
+    costHint: "Low-medium (depends on query depth)",
+  },
+  "2": {
+    summary: "Surface current trend clusters globally or by location.",
+    example: 'xint trends "San Francisco"',
+    costHint: "Low",
+  },
+  "3": {
+    summary: "Inspect profile metadata and recent activity context.",
+    example: "xint profile 0xNyk",
+    costHint: "Low",
+  },
+  "4": {
+    summary: "Expand a tweet into threaded conversation context.",
+    example: "xint thread https://x.com/.../status/...",
+    costHint: "Medium",
+  },
+  "5": {
+    summary: "Fetch article content from URL or tweet-linked article.",
+    example: "xint article https://x.com/.../status/...",
+    costHint: "Medium-high (fetch + parse)",
+  },
+  "6": {
+    summary: "Display full command reference and flags.",
+    example: "xint --help",
+    costHint: "None",
+  },
+  "0": {
+    summary: "Exit interactive dashboard.",
+    example: "q",
+    costHint: "None",
+  },
+};
+
 const THEMES: Record<string, Theme> = {
   minimal: { accent: "\x1b[1m", border: "", muted: "", reset: "\x1b[0m" },
   classic: { accent: "\x1b[1;36m", border: "\x1b[2m", muted: "\x1b[2m", reset: "\x1b[0m" },
@@ -56,6 +102,8 @@ const HELP_LINES = [
   "  Up/Down: Move selection",
   "  Enter: Run selected command",
   "  Tab: Switch tabs",
+  "  F: Output search (filter)",
+  "  PgUp/PgDn: Scroll output",
   "  /: Command palette",
   "  ?: Open Help tab",
   "  q or Esc: Exit",
@@ -129,8 +177,8 @@ function nextTab(tab: DashboardTab): DashboardTab {
   return "commands";
 }
 
-function buildLeftPane(activeIndex: number): string[] {
-  const lines: string[] = ["Menu", ""]; 
+function buildMenuLines(activeIndex: number): string[] {
+  const lines: string[] = ["Menu", ""];
   MENU_OPTIONS.forEach((option, index) => {
     const pointer = index === activeIndex ? ">" : " ";
     const aliases = option.aliases.length > 0 ? ` (${option.aliases.join(", ")})` : "";
@@ -140,51 +188,82 @@ function buildLeftPane(activeIndex: number): string[] {
   return lines;
 }
 
-function buildRightPane(session: SessionState, tab: DashboardTab): string[] {
-  if (tab === "help") {
-    return ["Help", "", ...HELP_LINES];
-  }
-  if (tab === "commands") {
-    return [
-      "Commands",
-      "",
-      "Search  - deep topic reconnaissance",
-      "Trends  - geo + global pulse",
-      "Profile - account intelligence snapshot",
-      "Thread  - conversation expansion",
-      "Article - fetch + parse linked content",
-      "",
-      "Tips",
-      "- Press / for fast palette",
-      "- Press Enter to execute",
-      "- Switch tab for Output/Help",
-    ];
-  }
-  const lines: string[] = ["Last run", ""];
-  lines.push(`command: ${session.lastCommand ?? "-"}`);
-  lines.push(`status: ${session.lastStatus ?? "-"}`);
-  lines.push("");
-  lines.push("output:");
-  if (session.lastOutputLines.length === 0) {
-    lines.push("(none yet)");
+function buildCommandDrawer(activeIndex: number): string[] {
+  const selected = MENU_OPTIONS[activeIndex] ?? MENU_OPTIONS[0];
+  const meta = COMMAND_META[selected.key] ?? {
+    summary: "No metadata available.",
+    example: "-",
+    costHint: "Unknown",
+  };
+  return [
+    "Command details",
+    "",
+    `Selected: ${selected.label}`,
+    `Summary: ${meta.summary}`,
+    `Example: ${meta.example}`,
+    `Cost: ${meta.costHint}`,
+  ];
+}
+
+function outputViewLines(session: SessionState, uiState: UiState, viewport: number): string[] {
+  const source = session.lastOutputLines;
+  const q = uiState.outputSearch.trim().toLowerCase();
+  const filtered =
+    q.length === 0 ? source : source.filter((line) => line.toLowerCase().includes(q));
+
+  const visible = Math.max(1, viewport);
+  const maxOffset = Math.max(0, filtered.length - visible);
+  uiState.outputOffset = Math.min(uiState.outputOffset, maxOffset);
+
+  const start = Math.max(0, filtered.length - visible - uiState.outputOffset);
+  const end = Math.max(start, Math.min(filtered.length, start + visible));
+  const windowLines = filtered.slice(start, end);
+
+  const lines: string[] = [
+    "Last run",
+    "",
+    `command: ${session.lastCommand ?? "-"}`,
+    `status: ${session.lastStatus ?? "-"}`,
+    `filter: ${uiState.outputSearch || "(none)"}`,
+    "",
+    "output:",
+  ];
+
+  if (windowLines.length === 0) {
+    lines.push("(no output lines for current filter)");
   } else {
-    lines.push(...session.lastOutputLines);
+    lines.push(...windowLines);
   }
+
+  const total = filtered.length;
+  const from = total === 0 ? 0 : start + 1;
+  const to = total === 0 ? 0 : end;
+  lines.push("");
+  lines.push(`view ${from}-${to} of ${total} | offset ${uiState.outputOffset}`);
+
   return lines;
 }
 
-function renderInteractiveMenu(uiState: UiState, session: SessionState): void {
+function buildTabLines(session: SessionState, uiState: UiState, viewport: number): string[] {
+  if (uiState.tab === "help") {
+    return ["Help", "", ...HELP_LINES];
+  }
+  if (uiState.tab === "commands") {
+    return buildCommandDrawer(uiState.activeIndex);
+  }
+  return outputViewLines(session, uiState, viewport);
+}
+
+function renderDoublePane(uiState: UiState, session: SessionState, columns: number, rows: number): void {
   const theme = activeTheme();
-  const columns = output.columns ?? 120;
-  const rows = output.rows ?? 32;
   const leftBoxWidth = Math.max(46, Math.floor(columns * 0.45));
   const rightBoxWidth = Math.max(30, columns - leftBoxWidth - 1);
   const leftInner = Math.max(20, leftBoxWidth - 2);
   const rightInner = Math.max(20, rightBoxWidth - 2);
   const totalRows = Math.max(12, rows - 7);
 
-  const leftLines = buildLeftPane(uiState.activeIndex);
-  const rightLines = buildRightPane(session, uiState.tab).slice(-totalRows);
+  const leftLines = buildMenuLines(uiState.activeIndex);
+  const rightLines = buildTabLines(session, uiState, totalRows).slice(-totalRows);
   const tabs = (["commands", "output", "help"] as DashboardTab[])
     .map((tab, index) => {
       const label = `${index + 1}:${tabLabel(tab)}`;
@@ -207,15 +286,67 @@ function renderInteractiveMenu(uiState: UiState, session: SessionState): void {
     const leftSegment = leftRaw.startsWith("> ")
       ? `${theme.accent}${leftText}${theme.reset}`
       : `${theme.muted}${leftText}${theme.reset}`;
+
     output.write(
       `${theme.border}|${theme.reset}${leftSegment}${theme.border}|${theme.reset} ${theme.border}|${theme.reset}${theme.muted}${rightText}${theme.reset}${theme.border}|${theme.reset}\n`,
     );
   }
 
   output.write(`${theme.border}+${"-".repeat(leftBoxWidth - 2)}+ +${"-".repeat(rightBoxWidth - 2)}+${theme.reset}\n`);
-  const footer = " Up/Down Navigate | Enter Run | Tab Tabs | / Palette | ? Help | q Quit ";
+  const footer = " Up/Down Navigate | Enter Run | Tab Tabs | F Search Output | PgUp/PgDn Scroll | / Palette | q Quit ";
   output.write(`${theme.border}|${theme.reset}${padText(footer, Math.max(1, columns - 2))}${theme.border}|${theme.reset}\n`);
   output.write(`${theme.border}+${"-".repeat(Math.max(1, columns - 2))}+${theme.reset}\n`);
+}
+
+function renderSinglePane(uiState: UiState, session: SessionState, columns: number, rows: number): void {
+  const theme = activeTheme();
+  const width = Math.max(30, columns - 2);
+  const totalRows = Math.max(10, rows - 6);
+  const tabs = (["commands", "output", "help"] as DashboardTab[])
+    .map((tab, index) => {
+      const label = `${index + 1}:${tabLabel(tab)}`;
+      return tab === uiState.tab ? `${theme.accent}[ ${label} ]${theme.reset}` : `[ ${label} ]`;
+    })
+    .join(" ");
+
+  const lines =
+    uiState.tab === "commands"
+      ? [...buildMenuLines(uiState.activeIndex), "", ...buildCommandDrawer(uiState.activeIndex)]
+      : buildTabLines(session, uiState, totalRows * 2);
+
+  output.write("\x1b[2J\x1b[H");
+  output.write(`${theme.border}+${"-".repeat(width)}+${theme.reset}\n`);
+  output.write(`${theme.border}|${theme.reset}${padText(` xint dashboard ${tabs}`, width)}${theme.border}|${theme.reset}\n`);
+  output.write(`${theme.border}+${"-".repeat(width)}+${theme.reset}\n`);
+
+  for (const line of lines.slice(-totalRows)) {
+    const row = padText(line, width);
+    if (line.startsWith("> ")) {
+      output.write(`${theme.border}|${theme.reset}${theme.accent}${row}${theme.reset}${theme.border}|${theme.reset}\n`);
+    } else {
+      output.write(`${theme.border}|${theme.reset}${theme.muted}${row}${theme.reset}${theme.border}|${theme.reset}\n`);
+    }
+  }
+
+  const rendered = Math.min(totalRows, lines.length);
+  for (let i = rendered; i < totalRows; i += 1) {
+    output.write(`${theme.border}|${theme.reset}${" ".repeat(width)}${theme.border}|${theme.reset}\n`);
+  }
+
+  const footer = " Tab Tabs | F Search Output | PgUp/PgDn Scroll | / Palette | q Quit ";
+  output.write(`${theme.border}+${"-".repeat(width)}+${theme.reset}\n`);
+  output.write(`${theme.border}|${theme.reset}${padText(footer, width)}${theme.border}|${theme.reset}\n`);
+  output.write(`${theme.border}+${"-".repeat(width)}+${theme.reset}\n`);
+}
+
+function renderDashboard(uiState: UiState, session: SessionState): void {
+  const columns = output.columns ?? 120;
+  const rows = output.rows ?? 32;
+  if (columns < 110) {
+    renderSinglePane(uiState, session, columns, rows);
+  } else {
+    renderDoublePane(uiState, session, columns, rows);
+  }
 }
 
 async function selectOption(
@@ -241,13 +372,11 @@ async function selectOption(
     const cleanup = () => {
       input.off("keypress", onKeypress);
       input.setRawMode(false);
-      input.pause();
     };
 
     const reopenRaw = () => {
       input.setRawMode(true);
-      input.resume();
-      renderInteractiveMenu(uiState, session);
+      renderDashboard(uiState, session);
     };
 
     const onKeypress = (str: string | undefined, key: { name?: string; ctrl?: boolean }) => {
@@ -258,19 +387,30 @@ async function selectOption(
         resolve("0");
         return;
       }
+
       if (key.name === "up") {
         uiState.activeIndex = (uiState.activeIndex - 1 + MENU_OPTIONS.length) % MENU_OPTIONS.length;
-        renderInteractiveMenu(uiState, session);
+        renderDashboard(uiState, session);
         return;
       }
       if (key.name === "down") {
         uiState.activeIndex = (uiState.activeIndex + 1) % MENU_OPTIONS.length;
-        renderInteractiveMenu(uiState, session);
+        renderDashboard(uiState, session);
         return;
       }
       if (key.name === "tab") {
         uiState.tab = nextTab(uiState.tab);
-        renderInteractiveMenu(uiState, session);
+        renderDashboard(uiState, session);
+        return;
+      }
+      if (key.name === "pageup" && uiState.tab === "output") {
+        uiState.outputOffset += 10;
+        renderDashboard(uiState, session);
+        return;
+      }
+      if (key.name === "pagedown" && uiState.tab === "output") {
+        uiState.outputOffset = Math.max(0, uiState.outputOffset - 10);
+        renderDashboard(uiState, session);
         return;
       }
       if (key.name === "return") {
@@ -288,28 +428,42 @@ async function selectOption(
       }
       if (str === "?") {
         uiState.tab = "help";
-        renderInteractiveMenu(uiState, session);
+        renderDashboard(uiState, session);
         return;
       }
       if (str === "1") {
         uiState.tab = "commands";
-        renderInteractiveMenu(uiState, session);
+        renderDashboard(uiState, session);
         return;
       }
       if (str === "2") {
         uiState.tab = "output";
-        renderInteractiveMenu(uiState, session);
+        renderDashboard(uiState, session);
         return;
       }
       if (str === "3") {
         uiState.tab = "help";
-        renderInteractiveMenu(uiState, session);
+        renderDashboard(uiState, session);
+        return;
+      }
+      if (str?.toLowerCase() === "f") {
+        paletteOpen = true;
+        input.setRawMode(false);
+        rl.question("\nOutput search (blank clears): ").then((query) => {
+          uiState.outputSearch = query.trim();
+          uiState.outputOffset = 0;
+          uiState.tab = "output";
+          session.lastStatus = uiState.outputSearch
+            ? `output filter active: ${uiState.outputSearch}`
+            : "output filter cleared";
+          paletteOpen = false;
+          reopenRaw();
+        });
         return;
       }
       if (str === "/") {
         paletteOpen = true;
         input.setRawMode(false);
-        input.pause();
         rl.question("\nPalette (/): ").then((query) => {
           const match = matchPalette(query);
           if (match) {
@@ -337,7 +491,7 @@ async function selectOption(
     input.setRawMode(true);
     input.resume();
     input.on("keypress", onKeypress);
-    renderInteractiveMenu(uiState, session);
+    renderDashboard(uiState, session);
   });
 }
 
@@ -345,8 +499,8 @@ function appendOutput(session: SessionState, line: string): void {
   const trimmed = line.trimEnd();
   if (!trimmed) return;
   session.lastOutputLines.push(trimmed);
-  if (session.lastOutputLines.length > 120) {
-    session.lastOutputLines = session.lastOutputLines.slice(-120);
+  if (session.lastOutputLines.length > 1200) {
+    session.lastOutputLines = session.lastOutputLines.slice(-1200);
   }
 }
 
@@ -370,7 +524,7 @@ async function consumeStream(
     for (const part of parts) {
       appendOutput(session, prefix ? `[${prefix}] ${part}` : part);
       if (input.isTTY && output.isTTY) {
-        renderInteractiveMenu(uiState, session);
+        renderDashboard(uiState, session);
       }
     }
   }
@@ -393,6 +547,7 @@ async function runSubcommand(
   });
 
   session.lastOutputLines = [];
+  uiState.outputOffset = 0;
 
   const spinnerFrames = ["|", "/", "-", "\\"];
   let spinnerIndex = 0;
@@ -400,7 +555,7 @@ async function runSubcommand(
     session.lastStatus = `running ${spinnerFrames[spinnerIndex % spinnerFrames.length]}`;
     spinnerIndex += 1;
     if (input.isTTY && output.isTTY) {
-      renderInteractiveMenu(uiState, session);
+      renderDashboard(uiState, session);
     }
   }, 90);
 
@@ -412,7 +567,7 @@ async function runSubcommand(
   clearInterval(spinner);
 
   const status = exitCode === 0 ? "success" : `failed (exit ${exitCode})`;
-  return { status, outputLines: session.lastOutputLines.slice(-120) };
+  return { status, outputLines: session.lastOutputLines.slice(-1200) };
 }
 
 function requireInput(value: string, label: string): string {
@@ -432,11 +587,14 @@ export async function cmdTui(): Promise<void> {
   const uiState: UiState = {
     activeIndex: initialIndex >= 0 ? initialIndex : 0,
     tab: "output",
+    outputOffset: 0,
+    outputSearch: "",
   };
   const session: SessionState = {
     lastOutputLines: [],
   };
   const rl = createInterface({ input, output });
+
   try {
     for (;;) {
       const choice = await selectOption(rl, session, uiState);
@@ -454,9 +612,7 @@ export async function cmdTui(): Promise<void> {
           case "1": {
             const query = requireInput(
               promptWithDefault(
-                await rl.question(
-                  `Search query${session.lastSearch ? ` [${session.lastSearch}]` : ""}: `,
-                ),
+                await rl.question(`Search query${session.lastSearch ? ` [${session.lastSearch}]` : ""}: `),
                 session.lastSearch,
               ),
               "Query",
@@ -502,9 +658,7 @@ export async function cmdTui(): Promise<void> {
           case "4": {
             const tweetRef = requireInput(
               promptWithDefault(
-                await rl.question(
-                  `Tweet ID or URL${session.lastTweetRef ? ` [${session.lastTweetRef}]` : ""}: `,
-                ),
+                await rl.question(`Tweet ID or URL${session.lastTweetRef ? ` [${session.lastTweetRef}]` : ""}: `),
                 session.lastTweetRef,
               ),
               "Tweet ID/URL",
