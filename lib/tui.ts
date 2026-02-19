@@ -1,5 +1,6 @@
 import { join } from "path";
 import { createInterface } from "readline/promises";
+import { emitKeypressEvents } from "readline";
 import { stdin as input, stdout as output } from "process";
 
 type MenuOption = {
@@ -28,11 +29,11 @@ const MENU_OPTIONS: MenuOption[] = [
 ];
 
 function printMenu(): void {
-  console.log("\n=== xint interactive ===");
+  output.write("\n=== xint interactive ===\n");
   for (const option of MENU_OPTIONS) {
     const aliases = option.aliases.length > 0 ? ` (${option.aliases.join(", ")})` : "";
-    console.log(`${option.key}) ${option.label}${aliases}`);
-    console.log(`   - ${option.hint}`);
+    output.write(`${option.key}) ${option.label}${aliases}\n`);
+    output.write(`   - ${option.hint}\n`);
   }
 }
 
@@ -44,6 +45,79 @@ function normalizeChoice(raw: string): string {
   const byAlias = MENU_OPTIONS.find((option) => option.aliases.includes(value));
   if (byAlias) return byAlias.key;
   return "";
+}
+
+function renderInteractiveMenu(activeIndex: number): void {
+  output.write("\x1b[2J\x1b[H");
+  output.write("=== xint interactive ===\n");
+  output.write("Use Up/Down arrows and Enter. Press q to exit.\n\n");
+  MENU_OPTIONS.forEach((option, index) => {
+    const isActive = index === activeIndex;
+    const pointer = isActive ? "›" : " ";
+    const aliases = option.aliases.length > 0 ? ` (${option.aliases.join(", ")})` : "";
+    if (isActive) {
+      output.write(`\x1b[1;36m${pointer} ${option.key}) ${option.label}${aliases}\x1b[0m\n`);
+    } else {
+      output.write(`${pointer} ${option.key}) ${option.label}${aliases}\n`);
+    }
+    output.write(`    ${option.hint}\n`);
+  });
+}
+
+async function selectOption(rl: ReturnType<typeof createInterface>): Promise<string> {
+  if (!input.isTTY || !output.isTTY || typeof input.setRawMode !== "function") {
+    printMenu();
+    return normalizeChoice(await rl.question("\nSelect option (number or alias): "));
+  }
+
+  emitKeypressEvents(input);
+  const initialIndex = MENU_OPTIONS.findIndex((option) => option.key === "1");
+  let activeIndex = initialIndex >= 0 ? initialIndex : 0;
+
+  return await new Promise<string>((resolve) => {
+    const onKeypress = (str: string, key: { name?: string; ctrl?: boolean }) => {
+      if (key.ctrl && key.name === "c") {
+        cleanup();
+        resolve("0");
+        return;
+      }
+      if (key.name === "up") {
+        activeIndex = (activeIndex - 1 + MENU_OPTIONS.length) % MENU_OPTIONS.length;
+        renderInteractiveMenu(activeIndex);
+        return;
+      }
+      if (key.name === "down") {
+        activeIndex = (activeIndex + 1) % MENU_OPTIONS.length;
+        renderInteractiveMenu(activeIndex);
+        return;
+      }
+      if (key.name === "return") {
+        const selected = MENU_OPTIONS[activeIndex];
+        cleanup();
+        output.write("\x1b[2J\x1b[H");
+        resolve(selected?.key ?? "0");
+        return;
+      }
+      const normalized = normalizeChoice(str);
+      if (normalized) {
+        cleanup();
+        output.write("\x1b[2J\x1b[H");
+        resolve(normalized);
+        return;
+      }
+    };
+
+    const cleanup = () => {
+      input.off("keypress", onKeypress);
+      input.setRawMode(false);
+      input.pause();
+    };
+
+    input.setRawMode(true);
+    input.resume();
+    input.on("keypress", onKeypress);
+    renderInteractiveMenu(activeIndex);
+  });
 }
 
 function runSubcommand(args: string[]): void {
@@ -82,8 +156,7 @@ export async function cmdTui(): Promise<void> {
   const rl = createInterface({ input, output });
   try {
     for (;;) {
-      printMenu();
-      const choice = normalizeChoice(await rl.question("\nSelect option (number or alias): "));
+      const choice = await selectOption(rl);
       if (choice === "0") {
         console.log("Exiting xint interactive mode.");
         break;
