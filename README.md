@@ -41,10 +41,11 @@ XINT_INSTALL_VERSION=2026.2.19.6 \
 curl -fsSL https://raw.githubusercontent.com/0xNyk/xint/main/install.sh | bash
 ```
 
-Homebrew (recommended as an additional managed path):
+Homebrew (managed binary path via Rust build):
 
 ```bash
-brew install bun
+brew tap 0xNyk/xint
+brew install xint
 ```
 
 Manual source install:
