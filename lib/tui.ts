@@ -31,7 +31,8 @@ const MENU_OPTIONS: MenuOption[] = [
   { key: "0", label: "Exit", aliases: ["exit", "quit", "q"], hint: "close interactive mode" },
 ];
 
-function normalizeChoice(raw: string): string {
+function normalizeChoice(raw: string | undefined | null): string {
+  if (typeof raw !== "string") return "";
   const value = raw.trim().toLowerCase();
   if (!value) return "";
   const byKey = MENU_OPTIONS.find((option) => option.key === value);
@@ -149,7 +150,7 @@ async function selectOption(
         resolve(selected?.key ?? "0");
         return;
       }
-      const normalized = normalizeChoice(str);
+      const normalized = normalizeChoice(typeof str === "string" ? str : "");
       if (normalized) {
         activeIndexRef.value = activeIndex;
         cleanup();
