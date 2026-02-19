@@ -31,8 +31,28 @@ Spiritual successor to [twint](https://github.com/twintproject/twint) (archived 
 ## Install
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/0xNyk/xint/main/install.sh | bash
+```
+
+Optional pinned version:
+
+```bash
+XINT_INSTALL_VERSION=2026.2.19.6 \
+curl -fsSL https://raw.githubusercontent.com/0xNyk/xint/main/install.sh | bash
+```
+
+Homebrew (recommended as an additional managed path):
+
+```bash
+brew install bun
+```
+
+Manual source install:
+
+```bash
 git clone https://github.com/0xNyk/xint.git
 cd xint
+bun install
 ```
 
 > **Requires:** [Bun](https://bun.sh) · [X API access](https://developer.x.com) (prepaid credits)
