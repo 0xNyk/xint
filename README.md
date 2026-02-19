@@ -295,6 +295,18 @@ xint mcp
 
 Runs an MCP server AI agents can connect to.
 
+```bash
+# HTTP/SSE mode (local-only by default)
+xint mcp --sse --port=3000
+
+# Optional: require bearer auth (recommended if binding beyond loopback)
+XINT_MCP_AUTH_TOKEN=change-me xint mcp --sse --host=127.0.0.1
+```
+
+Security defaults:
+- SSE mode binds to `127.0.0.1` unless `--host` / `XINT_MCP_HOST` is set.
+- If host is non-loopback, auth is required via `--auth-token` or `XINT_MCP_AUTH_TOKEN`.
+
 ## Cost
 
 | Operation | Cost |

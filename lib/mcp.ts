@@ -9,6 +9,8 @@ import * as api from "./api";
 import * as cache from "./cache";
 import { checkBudget, trackCost } from "./costs";
 import { recordCommandResult } from "./reliability";
+import { readFileSync } from "fs";
+import { join } from "path";
 
 type PolicyMode = "read_only" | "engagement" | "moderation";
 
@@ -17,9 +19,26 @@ interface MCPServerOptions {
   enforceBudget: boolean;
 }
 
+interface MCPSSEServerOptions extends MCPServerOptions {
+  host: string;
+  authToken?: string;
+}
+
 interface ToolExecutionResult {
   data: unknown;
   fallbackUsed: boolean;
+}
+
+function envOrDotEnv(key: string): string | undefined {
+  const direct = process.env[key];
+  if (direct && direct.trim()) return direct.trim();
+  try {
+    const envPath = join(import.meta.dir, "..", ".env");
+    const raw = readFileSync(envPath, "utf-8");
+    const m = raw.match(new RegExp(`^${key}=["']?([^"'\\n]+)`, "m"));
+    if (m?.[1]) return m[1].trim();
+  } catch {}
+  return undefined;
 }
 
 // Tool definitions
@@ -158,6 +177,98 @@ const TOOLS = [
     },
   },
   {
+    name: "xint_package_create",
+    description: "Create an agent memory package ingest job (v1 draft contract)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Human-readable package name" },
+        topicQuery: { type: "string", description: "Topic query used for ingest and refresh" },
+        sources: {
+          type: "array",
+          items: { type: "string", enum: ["x_api_v2", "xai_search", "web_article"] },
+          description: "Data sources to ingest",
+        },
+        timeWindow: {
+          type: "object",
+          properties: {
+            from: { type: "string", format: "date-time" },
+            to: { type: "string", format: "date-time" },
+          },
+          required: ["from", "to"],
+        },
+        policy: { type: "string", enum: ["private", "shared_candidate"], description: "Package visibility policy" },
+        analysisProfile: { type: "string", enum: ["summary", "analyst", "forensic"] },
+      },
+      required: ["name", "topicQuery", "sources", "timeWindow", "policy", "analysisProfile"],
+    },
+  },
+  {
+    name: "xint_package_status",
+    description: "Get package metadata and freshness (v1 draft contract)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        packageId: { type: "string", description: "Package identifier (pkg_*)" },
+      },
+      required: ["packageId"],
+    },
+  },
+  {
+    name: "xint_package_query",
+    description: "Query one or more packages and return claims with citations (v1 draft contract)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Question to ask over package memory" },
+        packageIds: {
+          type: "array",
+          items: { type: "string" },
+          description: "Package IDs included in retrieval scope",
+        },
+        maxClaims: { type: "number", description: "Maximum number of claims (default: 10)" },
+        requireCitations: { type: "boolean", description: "Require citations in response (default: true)" },
+      },
+      required: ["query", "packageIds"],
+    },
+  },
+  {
+    name: "xint_package_refresh",
+    description: "Trigger package refresh and create a new snapshot (v1 draft contract)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        packageId: { type: "string", description: "Package identifier" },
+        reason: { type: "string", enum: ["ttl", "manual", "event"] },
+      },
+      required: ["packageId", "reason"],
+    },
+  },
+  {
+    name: "xint_package_search",
+    description: "Search private and shared package catalog (v1 draft contract)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search query for package catalog" },
+        limit: { type: "number", description: "Max packages to return (default: 20)" },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "xint_package_publish",
+    description: "Publish a package snapshot to shared catalog (v1 draft contract)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        packageId: { type: "string", description: "Package identifier" },
+        snapshotVersion: { type: "number", description: "Snapshot version to publish" },
+      },
+      required: ["packageId", "snapshotVersion"],
+    },
+  },
+  {
     name: "xint_cache_clear",
     description: "Clear the xint search cache",
     inputSchema: {
@@ -179,6 +290,12 @@ const TOOL_POLICY: Record<string, PolicyMode> = {
   xint_analyze: "read_only",
   xint_trends: "read_only",
   xint_bookmarks: "engagement",
+  xint_package_create: "read_only",
+  xint_package_status: "read_only",
+  xint_package_query: "read_only",
+  xint_package_refresh: "read_only",
+  xint_package_search: "read_only",
+  xint_package_publish: "engagement",
   xint_cache_clear: "read_only",
 };
 
@@ -193,6 +310,11 @@ const TOOL_BUDGET_GUARDED = new Set<string>([
   "xint_collections_search",
   "xint_analyze",
   "xint_bookmarks",
+  "xint_package_create",
+  "xint_package_query",
+  "xint_package_refresh",
+  "xint_package_search",
+  "xint_package_publish",
 ]);
 
 function policyRank(mode: PolicyMode): number {
@@ -423,6 +545,86 @@ class MCPServer {
         return { data: { note: "Bookmarks requires OAuth - use xint bookmarks command" }, fallbackUsed: false };
       }
 
+      case "xint_package_create": {
+        const payload = {
+          name: String(args.name || ""),
+          topic_query: String(args.topicQuery || args.topic_query || ""),
+          sources: Array.isArray(args.sources) ? args.sources : [],
+          time_window: (args.timeWindow || args.time_window || {
+            from: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+            to: new Date().toISOString(),
+          }) as unknown,
+          policy: String(args.policy || "private"),
+          analysis_profile: String(args.analysisProfile || args.analysis_profile || "summary"),
+        };
+        const data = await this.callPackageApi("POST", "/packages", payload);
+        return { data, fallbackUsed: false };
+      }
+
+      case "xint_package_status": {
+        const packageId = String(args.packageId || args.package_id || "");
+        if (!packageId) throw new Error("Missing packageId/package_id");
+        const data = await this.callPackageApi("GET", `/packages/${encodeURIComponent(packageId)}`);
+        return { data, fallbackUsed: false };
+      }
+
+      case "xint_package_query": {
+        const payload = {
+          query: String(args.query || ""),
+          package_ids: Array.isArray(args.packageIds)
+            ? args.packageIds
+            : (Array.isArray(args.package_ids) ? args.package_ids : []),
+          max_claims: Number(args.maxClaims || args.max_claims || 10),
+          require_citations: args.requireCitations !== undefined
+            ? Boolean(args.requireCitations)
+            : (args.require_citations !== undefined ? Boolean(args.require_citations) : true),
+        };
+        if (!payload.query || payload.package_ids.length === 0) {
+          throw new Error("Missing query or packageIds/package_ids");
+        }
+        const data = await this.callPackageApi("POST", "/query", payload);
+        return { data, fallbackUsed: false };
+      }
+
+      case "xint_package_refresh": {
+        const packageId = String(args.packageId || args.package_id || "");
+        if (!packageId) throw new Error("Missing packageId/package_id");
+        const payload = {
+          reason: String(args.reason || "manual"),
+        };
+        const data = await this.callPackageApi(
+          "POST",
+          `/packages/${encodeURIComponent(packageId)}/refresh`,
+          payload
+        );
+        return { data, fallbackUsed: false };
+      }
+
+      case "xint_package_search": {
+        const query = String(args.query || "");
+        if (!query) throw new Error("Missing query");
+        const limit = Number(args.limit || 20);
+        const data = await this.callPackageApi(
+          "GET",
+          `/packages/search?q=${encodeURIComponent(query)}&limit=${encodeURIComponent(String(limit))}`
+        );
+        return { data, fallbackUsed: false };
+      }
+
+      case "xint_package_publish": {
+        const packageId = String(args.packageId || args.package_id || "");
+        const snapshotVersion = Number(args.snapshotVersion || args.snapshot_version || 0);
+        if (!packageId || !snapshotVersion) {
+          throw new Error("Missing packageId/package_id or snapshotVersion/snapshot_version");
+        }
+        const data = await this.callPackageApi(
+          "POST",
+          `/packages/${encodeURIComponent(packageId)}/publish`,
+          { snapshot_version: snapshotVersion }
+        );
+        return { data, fallbackUsed: false };
+      }
+
       case "xint_cache_clear": {
         const removed = cache.clear();
         return { data: { cleared: removed }, fallbackUsed: false };
@@ -431,6 +633,37 @@ class MCPServer {
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
+  }
+
+  private async callPackageApi(method: string, path: string, body?: unknown): Promise<unknown> {
+    const baseUrl = envOrDotEnv("XINT_PACKAGE_API_BASE_URL");
+    if (!baseUrl) {
+      throw new Error(
+        "XINT_PACKAGE_API_BASE_URL not set. Start local API with `xint package-api-server --port=8080` and set XINT_PACKAGE_API_BASE_URL=http://localhost:8080/v1"
+      );
+    }
+    const apiKey = envOrDotEnv("XINT_PACKAGE_API_KEY");
+    const url = `${baseUrl.replace(/\/+$/, "")}${path}`;
+    const headers: Record<string, string> = {};
+    if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+    if (body !== undefined) headers["Content-Type"] = "application/json";
+
+    const res = await fetch(url, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Package API ${res.status}: ${text.slice(0, 300)}`);
+    }
+
+    const contentType = res.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) {
+      return res.json();
+    }
+    return { ok: true };
   }
 }
 
@@ -442,12 +675,21 @@ export async function cmdMCPServer(args: string[]) {
   const policyMode = parsePolicyMode(policyArg?.split("=")[1] || process.env.XINT_POLICY_MODE);
   const portArg = args.find(a => a.startsWith("--port="));
   const port = portArg ? parseInt(portArg.split("=")[1]) : 3000;
+  const hostArg = args.find((arg) => arg.startsWith("--host="));
+  const host = hostArg?.split("=")[1] || process.env.XINT_MCP_HOST || "127.0.0.1";
+  const authTokenArg = args.find((arg) => arg.startsWith("--auth-token="));
+  const authToken = authTokenArg?.split("=")[1] || process.env.XINT_MCP_AUTH_TOKEN;
 
   console.error("Starting xint MCP server...");
   console.error(`Policy mode: ${policyMode} | Budget guard: ${noBudget ? "disabled" : "enabled"}`);
 
   if (isSSE) {
-    await runSSE(port, { policyMode, enforceBudget: !noBudget });
+    if (host !== "127.0.0.1" && host !== "localhost" && !authToken) {
+      throw new Error(
+        "Refusing non-loopback MCP bind without auth token. Set XINT_MCP_AUTH_TOKEN or pass --auth-token=<token>."
+      );
+    }
+    await runSSE(port, { policyMode, enforceBudget: !noBudget, host, authToken });
   } else {
     await runStdio({ policyMode, enforceBudget: !noBudget });
   }
@@ -479,11 +721,25 @@ async function runStdio(options: MCPServerOptions) {
   });
 }
 
-async function runSSE(port: number, options: MCPServerOptions) {
+function hasValidBearerToken(authHeader: string | undefined, expectedToken: string): boolean {
+  if (!authHeader || !authHeader.startsWith("Bearer ")) return false;
+  return authHeader.slice("Bearer ".length).trim() === expectedToken;
+}
+
+async function runSSE(port: number, options: MCPSSEServerOptions) {
   const http = await import("http");
-  const server = new MCPServer(options);
+  const server = new MCPServer({
+    policyMode: options.policyMode,
+    enforceBudget: options.enforceBudget,
+  });
 
   const httpServer = http.createServer(async (req, res) => {
+    if (options.authToken && !hasValidBearerToken(req.headers.authorization, options.authToken)) {
+      res.writeHead(401, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Unauthorized" }));
+      return;
+    }
+
     if (req.url === "/sse") {
       res.writeHead(200, {
         "Content-Type": "text/event-stream",
@@ -517,10 +773,15 @@ async function runSSE(port: number, options: MCPServerOptions) {
     }
   });
 
-  httpServer.listen(port, () => {
-    console.error(`xint MCP server running on http://localhost:${port}`);
-    console.error(`SSE endpoint: http://localhost:${port}/sse`);
-    console.error(`MCP endpoint: http://localhost:${port}/mcp`);
+  httpServer.listen(port, options.host, () => {
+    console.error(`xint MCP server running on http://${options.host}:${port}`);
+    console.error(`SSE endpoint: http://${options.host}:${port}/sse`);
+    console.error(`MCP endpoint: http://${options.host}:${port}/mcp`);
+    if (options.authToken) {
+      console.error("Auth: enabled (Bearer token)");
+    } else {
+      console.error("Auth: disabled (local bind only)");
+    }
   });
 }
 

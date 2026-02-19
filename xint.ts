@@ -34,6 +34,7 @@
  *   auth setup [--manual]       Set up OAuth 2.0 PKCE authentication
  *   auth status                 Check OAuth token status
  *   auth refresh                Manually refresh OAuth tokens
+ *   package-api-server [opts]   Start local package API server (dev)
  *   cache clear                 Clear search cache
  *
  * Search options:
@@ -97,6 +98,7 @@ import { cmdCapabilities } from "./lib/capabilities";
 import { buildOutputMeta, printJsonWithMeta, printJsonlWithMeta } from "./lib/output-meta";
 import { cmdAuthDoctor, cmdHealth } from "./lib/health";
 import { consumeCommandFallback, recordCommandResult } from "./lib/reliability";
+import { cmdPackageApiServer } from "./lib/package_api_server";
 
 const SKILL_DIR = import.meta.dir;
 const WATCHLIST_PATH = join(SKILL_DIR, "data", "watchlist.json");
@@ -189,6 +191,8 @@ const COMMAND_POLICY: Record<string, RequiredMode> = {
   kb: "read_only",
   mcp: "read_only",
   "mcp-server": "read_only",
+  "package-api-server": "read_only",
+  "pkg-api": "read_only",
   capabilities: "read_only",
   caps: "read_only",
 };
@@ -769,14 +773,22 @@ Commands:
   ai-search <file>           Search X via xAI's x_search tool (AI-powered)
   collections <subcmd>       Manage xAI Collections Knowledge Base
   mcp-server [options]        Start MCP server for AI agents (Claude, OpenAI)
+  package-api-server [opts]   Run local package API for Agent Memory v1
   capabilities [--compact]    Print JSON capability/pricing/policy schema
 
 MCP Server options:
   --sse                       Run in SSE mode (HTTP server)
   --port=<N>                  Port for SSE mode (default: 3000)
+  --host=<addr>               Host bind for SSE mode (default: 127.0.0.1)
+  --auth-token=<token>        Require bearer auth for /mcp and /sse
   --policy=<mode>             MCP policy mode: read_only|engagement|moderation
   --no-budget-guard           Disable budget guard for tool calls
   Run without flags for stdio mode (for Claude Code integration)
+  Env: XINT_MCP_HOST, XINT_MCP_AUTH_TOKEN
+
+Package API server options:
+  --port=<N>                  Port for local package API (default: 8080)
+  Set XINT_PACKAGE_API_KEY to require bearer auth for local calls
 
 Search options:
   --sort likes|impressions|retweets|recent   (default: likes)
@@ -897,6 +909,7 @@ function metricCommandName(cmd?: string): string | null {
   if (cmd === "wl") return "watchlist";
   if (cmd === "kb") return "collections";
   if (cmd === "mcp") return "mcp-server";
+  if (cmd === "pkg-api") return "package-api-server";
   if (cmd === "stream_rules") return "stream-rules";
   if (cmd === "bm-save") return "bookmark";
   if (cmd === "bm-remove") return "unbookmark";
@@ -912,7 +925,7 @@ function metricCommandName(cmd?: string): string | null {
     "bookmarks", "likes", "like", "unlike", "following", "follow", "unfollow",
     "media", "stream", "stream-rules", "lists", "blocks", "mutes", "bookmark",
     "unbookmark", "trends", "analyze", "costs", "health", "auth", "watchlist",
-    "cache", "ai-search", "collections", "mcp-server", "capabilities",
+    "cache", "ai-search", "collections", "mcp-server", "package-api-server", "capabilities",
   ]);
   return known.has(cmd) ? cmd : null;
 }
@@ -1044,6 +1057,10 @@ async function main() {
       case "mcp-server":
         process.env.XINT_POLICY_MODE = policyMode;
         await cmdMCPServer(args.slice(1));
+        break;
+      case "package-api-server":
+      case "pkg-api":
+        await cmdPackageApiServer(args.slice(1));
         break;
       case "capabilities":
       case "caps":
