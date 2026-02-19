@@ -20,7 +20,7 @@ function envOrDotEnv(key: string): string | undefined {
 }
 
 function packageApiBaseUrl(): string {
-  return envOrDotEnv("XINT_PACKAGE_API_BASE_URL") || "http://localhost:8080/v1";
+  return envOrDotEnv("XINT_PACKAGE_API_BASE_URL") || "http://localhost:8787/v1";
 }
 
 function packageApiKey(): string | undefined {

@@ -639,7 +639,7 @@ class MCPServer {
     const baseUrl = envOrDotEnv("XINT_PACKAGE_API_BASE_URL");
     if (!baseUrl) {
       throw new Error(
-        "XINT_PACKAGE_API_BASE_URL not set. Start local API with `xint package-api-server --port=8080` and set XINT_PACKAGE_API_BASE_URL=http://localhost:8080/v1"
+        "XINT_PACKAGE_API_BASE_URL not set. Start xint-cloud service on :8787 and set XINT_PACKAGE_API_BASE_URL=http://localhost:8787/v1"
       );
     }
     const apiKey = envOrDotEnv("XINT_PACKAGE_API_KEY");
