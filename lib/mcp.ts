@@ -331,7 +331,7 @@ function parsePolicyMode(raw?: string): PolicyMode {
 }
 
 // MCP Server implementation
-class MCPServer {
+export class MCPServer {
   private initialized = false;
   private idCounter = 1;
   private readonly options: MCPServerOptions;
