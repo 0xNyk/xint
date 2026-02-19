@@ -10,6 +10,7 @@ import type { Tweet } from "./api";
 import { getValidToken, loadTokens } from "./oauth";
 import * as cache from "./cache";
 import * as fmt from "./format";
+import { trackCost } from "./costs";
 
 const SKILL_DIR = join(import.meta.dir, "..");
 const DRAFTS_DIR = join(SKILL_DIR, "data", "exports");

@@ -67,7 +67,7 @@ export interface Tweet {
 }
 
 interface RawResponse {
-  data?: any[];
+  data?: any;
   includes?: { users?: any[] };
   meta?: { next_token?: string; result_count?: number };
   errors?: any[];
@@ -77,7 +77,7 @@ interface RawResponse {
 }
 
 export function parseTweets(raw: RawResponse): Tweet[] {
-  if (!raw.data) return [];
+  if (!Array.isArray(raw.data)) return [];
   const users: Record<string, any> = {};
   for (const u of raw.includes?.users || []) {
     users[u.id] = u;

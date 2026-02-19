@@ -37,15 +37,21 @@ curl -fsSL https://raw.githubusercontent.com/0xNyk/xint/main/install.sh | bash
 Optional pinned version:
 
 ```bash
-XINT_INSTALL_VERSION=2026.2.19.6 \
+XINT_INSTALL_VERSION=<version-tag> \
 curl -fsSL https://raw.githubusercontent.com/0xNyk/xint/main/install.sh | bash
 ```
 
-Homebrew (managed binary path via Rust build):
+Homebrew (lightweight prebuilt binary on Apple Silicon):
 
 ```bash
 brew tap 0xNyk/xint
 brew install xint
+```
+
+Rust variant explicitly:
+
+```bash
+brew install xint-rs
 ```
 
 Manual source install:
