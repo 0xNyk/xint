@@ -79,6 +79,7 @@ bun install
 | Report | `xint report "crypto"` |
 | Article | `xint article <url> --ai "summarize"` |
 | Capabilities | `xint capabilities --json` |
+| TUI | `xint tui` |
 
 ### Shorthands
 

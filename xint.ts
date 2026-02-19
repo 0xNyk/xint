@@ -8,6 +8,7 @@
  *   profile <username>          Recent tweets from a user
  *   tweet <tweet_id>            Fetch a single tweet
  *   article <url>               Fetch and read full article content
+ *   tui                         Interactive menu for common read-only flows
  *   capabilities                Print machine-readable capability manifest
  *   watchlist                   Show watchlist
  *   watchlist add <user>        Add user to watchlist
@@ -101,6 +102,7 @@ import { cmdAuthDoctor, cmdHealth } from "./lib/health";
 import { consumeCommandFallback, recordCommandResult } from "./lib/reliability";
 import { cmdPackageApiServer } from "./lib/package_api_server";
 import { cmdBilling } from "./lib/billing";
+import { cmdTui } from "./lib/tui";
 
 const SKILL_DIR = import.meta.dir;
 const WATCHLIST_PATH = join(SKILL_DIR, "data", "watchlist.json");
@@ -159,6 +161,8 @@ const COMMAND_POLICY: Record<string, RequiredMode> = {
   media: "read_only",
   article: "read_only",
   read: "read_only",
+  tui: "read_only",
+  ui: "read_only",
   bookmarks: "engagement",
   bm: "engagement",
   bookmark: "engagement",
@@ -744,6 +748,7 @@ Commands:
   profile <username>          Recent tweets from a user
   tweet <tweet_id>            Fetch a single tweet
   article <url>               Fetch and read full article content
+  tui                         Interactive menu for common read-only workflows
   capabilities                Print machine-readable capability manifest
   bookmarks [options]         Fetch your bookmarked tweets (OAuth required)
   likes [options]             Fetch your liked tweets (OAuth required)
@@ -922,12 +927,13 @@ function metricCommandName(cmd?: string): string | null {
   if (cmd === "followers") return "diff";
   if (cmd === "ask") return "analyze";
   if (cmd === "read") return "article";
+  if (cmd === "ui") return "tui";
   if (cmd === "x_search" || cmd === "xsearch" || cmd === "ai-search") return "ai-search";
   if (cmd === "list") return "lists";
   if (cmd === "block") return "blocks";
   if (cmd === "mute") return "mutes";
   const known = new Set([
-    "search", "watch", "diff", "report", "thread", "profile", "tweet", "article",
+    "search", "watch", "diff", "report", "thread", "profile", "tweet", "article", "tui",
     "bookmarks", "likes", "like", "unlike", "following", "follow", "unfollow",
     "media", "stream", "stream-rules", "lists", "blocks", "mutes", "bookmark",
     "unbookmark", "trends", "analyze", "costs", "health", "auth", "watchlist",
@@ -961,6 +967,10 @@ async function main() {
       case "article":
       case "read":
         await cmdArticle();
+        break;
+      case "tui":
+      case "ui":
+        await cmdTui();
         break;
       case "bookmarks":
       case "bm":
