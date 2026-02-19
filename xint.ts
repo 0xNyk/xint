@@ -99,6 +99,7 @@ import { buildOutputMeta, printJsonWithMeta, printJsonlWithMeta } from "./lib/ou
 import { cmdAuthDoctor, cmdHealth } from "./lib/health";
 import { consumeCommandFallback, recordCommandResult } from "./lib/reliability";
 import { cmdPackageApiServer } from "./lib/package_api_server";
+import { cmdBilling } from "./lib/billing";
 
 const SKILL_DIR = import.meta.dir;
 const WATCHLIST_PATH = join(SKILL_DIR, "data", "watchlist.json");
@@ -179,6 +180,8 @@ const COMMAND_POLICY: Record<string, RequiredMode> = {
   ask: "read_only",
   costs: "read_only",
   cost: "read_only",
+  billing: "read_only",
+  bill: "read_only",
   auth: "read_only",
   health: "read_only",
   watchlist: "read_only",
@@ -759,6 +762,7 @@ Commands:
   trends [location] [opts]    Fetch trending topics
   analyze <query>             Analyze with Grok AI (xAI)
   costs [today|week|month]    View API cost tracking & budget
+  billing [status|usage]      View package API entitlements and usage
   health [--json]             Runtime health, auth checks, and reliability stats
   auth setup [--manual]       Set up OAuth 2.0 PKCE authentication
   auth status                 Check OAuth token status
@@ -904,6 +908,7 @@ function metricCommandName(cmd?: string): string | null {
   if (cmd === "p") return "profile";
   if (cmd === "tr") return "trends";
   if (cmd === "cost") return "costs";
+  if (cmd === "bill") return "billing";
   if (cmd === "bm") return "bookmarks";
   if (cmd === "caps") return "capabilities";
   if (cmd === "wl") return "watchlist";
@@ -925,7 +930,7 @@ function metricCommandName(cmd?: string): string | null {
     "bookmarks", "likes", "like", "unlike", "following", "follow", "unfollow",
     "media", "stream", "stream-rules", "lists", "blocks", "mutes", "bookmark",
     "unbookmark", "trends", "analyze", "costs", "health", "auth", "watchlist",
-    "cache", "ai-search", "collections", "mcp-server", "package-api-server", "capabilities",
+    "cache", "ai-search", "collections", "mcp-server", "package-api-server", "capabilities", "billing",
   ]);
   return known.has(cmd) ? cmd : null;
 }
@@ -1019,6 +1024,10 @@ async function main() {
       case "costs":
       case "cost":
         cmdCosts(args.slice(1));
+        break;
+      case "billing":
+      case "bill":
+        await cmdBilling(args.slice(1));
         break;
       case "health":
         await cmdHealth(args.slice(1));

@@ -54,11 +54,94 @@ interface AuditEvent {
 interface Store {
   packages: Record<string, PackageRecord>;
   audit_events: AuditEvent[];
+  workspaces?: Record<string, WorkspaceRecord>;
+  usage_events?: UsageEvent[];
+}
+
+type PlanName = "free" | "pro" | "team" | "enterprise";
+
+interface PlanLimits {
+  max_packages: number;
+  max_query_claims: number;
+}
+
+interface PlanOverages {
+  package_query_per_1k_usd?: number;
+}
+
+interface PlanFeatures {
+  shared_publish: boolean;
+  audit_log_access: boolean;
+}
+
+interface WorkspaceEntitlements {
+  plan: PlanName;
+  features: PlanFeatures;
+  limits: PlanLimits;
+  overages: PlanOverages;
+  updated_at: string;
+}
+
+interface WorkspaceUsage {
+  package_create_count: number;
+  package_query_count: number;
+  package_refresh_count: number;
+  package_publish_count: number;
+  updated_at: string;
+}
+
+interface WorkspaceRecord {
+  id: string;
+  name: string;
+  entitlements: WorkspaceEntitlements;
+  usage: WorkspaceUsage;
+}
+
+interface UsageEvent {
+  id: string;
+  workspace_id: string;
+  actor: string;
+  operation:
+    | "package.create"
+    | "package.query"
+    | "package.refresh"
+    | "package.publish"
+    | "package.search"
+    | "package.status";
+  units: number;
+  request_id: string;
+  created_at: string;
 }
 
 const STORE_PATH = join(import.meta.dir, "..", "data", "package-api-store.json");
 const API_PREFIX = "/v1";
 const DEFAULT_TTL_SECONDS = 21_600;
+const DEFAULT_WORKSPACE_ID = "ws_local";
+const DEFAULT_WORKSPACE_NAME = "Local Workspace";
+const DEFAULT_PLAN_NAME: PlanName = "free";
+
+const PLAN_CATALOG: Record<PlanName, { features: PlanFeatures; limits: PlanLimits; overages: PlanOverages }> = {
+  free: {
+    features: { shared_publish: false, audit_log_access: true },
+    limits: { max_packages: 3, max_query_claims: 10 },
+    overages: {},
+  },
+  pro: {
+    features: { shared_publish: true, audit_log_access: true },
+    limits: { max_packages: 100, max_query_claims: 50 },
+    overages: { package_query_per_1k_usd: 2 },
+  },
+  team: {
+    features: { shared_publish: true, audit_log_access: true },
+    limits: { max_packages: 1000, max_query_claims: 100 },
+    overages: { package_query_per_1k_usd: 1.5 },
+  },
+  enterprise: {
+    features: { shared_publish: true, audit_log_access: true },
+    limits: { max_packages: 10_000, max_query_claims: 500 },
+    overages: { package_query_per_1k_usd: 1 },
+  },
+};
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -71,6 +154,8 @@ function loadStore(): Store {
     return {
       packages: parsed.packages || {},
       audit_events: parsed.audit_events || [],
+      workspaces: parsed.workspaces || {},
+      usage_events: parsed.usage_events || [],
     };
   } catch {
     return { packages: {}, audit_events: [] };
@@ -99,6 +184,113 @@ function addAuditEvent(
   if (store.audit_events.length > 5000) {
     store.audit_events = store.audit_events.slice(0, 5000);
   }
+}
+
+function addUsageEvent(
+  store: Store,
+  workspaceId: string,
+  actor: string,
+  operation: UsageEvent["operation"],
+  units: number,
+  requestId: string
+): void {
+  if (!store.usage_events) store.usage_events = [];
+  store.usage_events.unshift({
+    id: `use_${randomUUID().slice(0, 8)}`,
+    workspace_id: workspaceId,
+    actor,
+    operation,
+    units,
+    request_id: requestId,
+    created_at: nowIso(),
+  });
+  if (store.usage_events.length > 20_000) {
+    store.usage_events = store.usage_events.slice(0, 20_000);
+  }
+}
+
+function makeEntitlements(plan: PlanName): WorkspaceEntitlements {
+  const preset = PLAN_CATALOG[plan];
+  return {
+    plan,
+    features: { ...preset.features },
+    limits: { ...preset.limits },
+    overages: { ...preset.overages },
+    updated_at: nowIso(),
+  };
+}
+
+function ensureWorkspaceStore(store: Store): void {
+  if (!store.workspaces) store.workspaces = {};
+  if (!store.workspaces[DEFAULT_WORKSPACE_ID]) {
+    const plan = parsePlanName(process.env.XINT_PACKAGE_API_PLAN);
+    store.workspaces[DEFAULT_WORKSPACE_ID] = {
+      id: DEFAULT_WORKSPACE_ID,
+      name: DEFAULT_WORKSPACE_NAME,
+      entitlements: makeEntitlements(plan),
+      usage: {
+        package_create_count: 0,
+        package_query_count: 0,
+        package_refresh_count: 0,
+        package_publish_count: 0,
+        updated_at: nowIso(),
+      },
+    };
+  }
+}
+
+function parsePlanName(raw: string | undefined): PlanName {
+  const normalized = String(raw || "").toLowerCase().trim();
+  if (normalized === "pro" || normalized === "team" || normalized === "enterprise" || normalized === "free") {
+    return normalized;
+  }
+  return DEFAULT_PLAN_NAME;
+}
+
+function resolveWorkspace(req: any, store: Store): WorkspaceRecord {
+  ensureWorkspaceStore(store);
+  const requested = String(req.headers["x-workspace-id"] || DEFAULT_WORKSPACE_ID).trim() || DEFAULT_WORKSPACE_ID;
+  if (!store.workspaces![requested]) {
+    store.workspaces![requested] = {
+      id: requested,
+      name: `Workspace ${requested}`,
+      entitlements: makeEntitlements(parsePlanName(process.env.XINT_PACKAGE_API_PLAN)),
+      usage: {
+        package_create_count: 0,
+        package_query_count: 0,
+        package_refresh_count: 0,
+        package_publish_count: 0,
+        updated_at: nowIso(),
+      },
+    };
+  }
+  return store.workspaces![requested];
+}
+
+function sendMonetizationError(
+  res: any,
+  status: number,
+  code: "PLAN_REQUIRED" | "QUOTA_EXCEEDED" | "FEATURE_NOT_IN_PLAN",
+  message: string,
+  details: Record<string, unknown> = {}
+): void {
+  sendJson(res, status, {
+    error: message,
+    code,
+    details,
+  });
+}
+
+function countPackagesForWorkspace(store: Store, workspaceId: string): number {
+  return Object.values(store.packages).filter((pkg) => pkg.tenant_id === workspaceId).length;
+}
+
+function bumpWorkspaceUsage(workspace: WorkspaceRecord, key: keyof WorkspaceUsage): void {
+  const current = workspace.usage[key];
+  if (typeof current === "number") {
+    workspace.usage[key] = current + 1;
+  }
+  workspace.usage.updated_at = nowIso();
 }
 
 function sendJson(res: any, status: number, payload: unknown): void {
@@ -151,6 +343,12 @@ function asActor(req: any): string {
   return typeof fromHeader === "string" && fromHeader.trim() ? fromHeader : "local-dev";
 }
 
+function asRequestId(req: any): string {
+  const fromHeader = req.headers["x-request-id"];
+  if (typeof fromHeader === "string" && fromHeader.trim()) return fromHeader.trim();
+  return `req_${randomUUID().slice(0, 8)}`;
+}
+
 export async function cmdPackageApiServer(argv: string[]): Promise<void> {
   const http = await import("http");
   const portArg = argv.find((a) => a.startsWith("--port="));
@@ -163,12 +361,30 @@ export async function cmdPackageApiServer(argv: string[]): Promise<void> {
       const reqUrl = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
       const pathname = reqUrl.pathname;
       const actor = asActor(req);
+      const requestId = asRequestId(req);
       const store = loadStore();
+      const workspace = resolveWorkspace(req, store);
 
       if (method === "POST" && pathname === `${API_PREFIX}/packages`) {
         const body = normalizeCreateBody(await readJsonBody(req));
         if (!body.name || !body.topic_query || !body.time_window.from || !body.time_window.to) {
           sendJson(res, 400, { error: "Missing required package fields" });
+          return;
+        }
+        const currentPackages = countPackagesForWorkspace(store, workspace.id);
+        if (currentPackages >= workspace.entitlements.limits.max_packages) {
+          sendMonetizationError(
+            res,
+            402,
+            "QUOTA_EXCEEDED",
+            `Package limit reached for plan '${workspace.entitlements.plan}'.`,
+            {
+              workspace_id: workspace.id,
+              limit: workspace.entitlements.limits.max_packages,
+              current: currentPackages,
+              metric: "max_packages",
+            }
+          );
           return;
         }
         const packageId = `pkg_${randomUUID().slice(0, 8)}`;
@@ -184,7 +400,7 @@ export async function cmdPackageApiServer(argv: string[]): Promise<void> {
         };
         store.packages[packageId] = {
           id: packageId,
-          tenant_id: "ten_local",
+          tenant_id: workspace.id,
           name: body.name,
           topic_query: body.topic_query,
           sources: body.sources,
@@ -200,6 +416,8 @@ export async function cmdPackageApiServer(argv: string[]): Promise<void> {
           snapshots: [snapshot],
         };
         addAuditEvent(store, "package.created", actor, { package_id: packageId, job_id: jobId });
+        bumpWorkspaceUsage(workspace, "package_create_count");
+        addUsageEvent(store, workspace.id, actor, "package.create", 1, requestId);
         saveStore(store);
         sendJson(res, 202, { package_id: packageId, job_id: jobId, status: "queued" });
         return;
@@ -213,6 +431,7 @@ export async function cmdPackageApiServer(argv: string[]): Promise<void> {
           return;
         }
         const items = Object.values(store.packages)
+          .filter((pkg) => pkg.tenant_id === workspace.id)
           .filter((pkg) => pkg.name.toLowerCase().includes(q) || pkg.topic_query.toLowerCase().includes(q))
           .slice(0, limit)
           .map((pkg) => ({
@@ -221,6 +440,8 @@ export async function cmdPackageApiServer(argv: string[]): Promise<void> {
             policy: pkg.policy === "shared" ? "shared" : "private",
             freshness: pkg.freshness,
           }));
+        addUsageEvent(store, workspace.id, actor, "package.search", 1, requestId);
+        saveStore(store);
         sendJson(res, 200, { items });
         return;
       }
@@ -229,10 +450,12 @@ export async function cmdPackageApiServer(argv: string[]): Promise<void> {
       if (method === "GET" && packageMatch) {
         const packageId = decodeURIComponent(packageMatch[1]);
         const pkg = store.packages[packageId];
-        if (!pkg) {
+        if (!pkg || pkg.tenant_id !== workspace.id) {
           sendJson(res, 404, { error: "Package not found" });
           return;
         }
+        addUsageEvent(store, workspace.id, actor, "package.status", 1, requestId);
+        saveStore(store);
         sendJson(res, 200, pkg);
         return;
       }
@@ -241,7 +464,7 @@ export async function cmdPackageApiServer(argv: string[]): Promise<void> {
       if (method === "GET" && snapshotsMatch) {
         const packageId = decodeURIComponent(snapshotsMatch[1]);
         const pkg = store.packages[packageId];
-        if (!pkg) {
+        if (!pkg || pkg.tenant_id !== workspace.id) {
           sendJson(res, 404, { error: "Package not found" });
           return;
         }
@@ -253,7 +476,7 @@ export async function cmdPackageApiServer(argv: string[]): Promise<void> {
       if (method === "POST" && refreshMatch) {
         const packageId = decodeURIComponent(refreshMatch[1]);
         const pkg = store.packages[packageId];
-        if (!pkg) {
+        if (!pkg || pkg.tenant_id !== workspace.id) {
           sendJson(res, 404, { error: "Package not found" });
           return;
         }
@@ -280,6 +503,8 @@ export async function cmdPackageApiServer(argv: string[]): Promise<void> {
           job_id: jobId,
           reason: body.reason || "manual",
         });
+        bumpWorkspaceUsage(workspace, "package_refresh_count");
+        addUsageEvent(store, workspace.id, actor, "package.refresh", 1, requestId);
         saveStore(store);
         sendJson(res, 202, { job_id: jobId, target_snapshot_version: nextVersion });
         return;
@@ -289,8 +514,21 @@ export async function cmdPackageApiServer(argv: string[]): Promise<void> {
       if (method === "POST" && publishMatch) {
         const packageId = decodeURIComponent(publishMatch[1]);
         const pkg = store.packages[packageId];
-        if (!pkg) {
+        if (!pkg || pkg.tenant_id !== workspace.id) {
           sendJson(res, 404, { error: "Package not found" });
+          return;
+        }
+        if (!workspace.entitlements.features.shared_publish) {
+          sendMonetizationError(
+            res,
+            403,
+            "FEATURE_NOT_IN_PLAN",
+            `Publishing packages requires a higher plan than '${workspace.entitlements.plan}'.`,
+            {
+              workspace_id: workspace.id,
+              required_feature: "shared_publish",
+            }
+          );
           return;
         }
         const body = (await readJsonBody(req)) as { snapshot_version?: number };
@@ -300,6 +538,8 @@ export async function cmdPackageApiServer(argv: string[]): Promise<void> {
           package_id: packageId,
           snapshot_version: snapshotVersion,
         });
+        bumpWorkspaceUsage(workspace, "package_publish_count");
+        addUsageEvent(store, workspace.id, actor, "package.publish", 1, requestId);
         saveStore(store);
         sendJson(res, 200, {
           package_id: packageId,
@@ -338,8 +578,13 @@ export async function cmdPackageApiServer(argv: string[]): Promise<void> {
           return;
         }
 
-        const maxClaims = Math.min(Number(body.max_claims || 10), 100);
-        const packages = packageIds.map((id) => store.packages[id]).filter(Boolean);
+        const maxClaims = Math.min(
+          Number(body.max_claims || 10),
+          workspace.entitlements.limits.max_query_claims
+        );
+        const packages = packageIds
+          .map((id) => store.packages[id])
+          .filter((pkg): pkg is PackageRecord => Boolean(pkg && pkg.tenant_id === workspace.id));
         if (packages.length === 0) {
           sendJson(res, 404, { error: "No matching packages found" });
           return;
@@ -369,6 +614,8 @@ export async function cmdPackageApiServer(argv: string[]): Promise<void> {
           package_ids: packageIds,
           claim_count: claims.length,
         });
+        bumpWorkspaceUsage(workspace, "package_query_count");
+        addUsageEvent(store, workspace.id, actor, "package.query", claims.length, requestId);
         saveStore(store);
         sendJson(res, 200, {
           answer: `Found ${claims.length} claim(s) across ${packages.length} package(s) for query '${query}'.`,
@@ -389,6 +636,42 @@ export async function cmdPackageApiServer(argv: string[]): Promise<void> {
       if (method === "GET" && pathname === `${API_PREFIX}/audit/events`) {
         const limit = Math.min(parseInt(reqUrl.searchParams.get("limit") || "100", 10), 500);
         sendJson(res, 200, { items: store.audit_events.slice(0, limit) });
+        return;
+      }
+
+      if (method === "GET" && pathname === `${API_PREFIX}/billing/entitlements`) {
+        const currentPackages = countPackagesForWorkspace(store, workspace.id);
+        sendJson(res, 200, {
+          workspace: {
+            id: workspace.id,
+            name: workspace.name,
+          },
+          entitlements: workspace.entitlements,
+          usage: {
+            ...workspace.usage,
+            current_package_count: currentPackages,
+          },
+        });
+        return;
+      }
+
+      if (method === "GET" && pathname === `${API_PREFIX}/billing/usage`) {
+        const days = Math.min(parseInt(reqUrl.searchParams.get("days") || "30", 10), 365);
+        const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+        const events = (store.usage_events || []).filter((event) => {
+          return event.workspace_id === workspace.id && Date.parse(event.created_at) >= cutoff;
+        });
+        const byOperation = events.reduce<Record<string, number>>((acc, event) => {
+          acc[event.operation] = (acc[event.operation] || 0) + event.units;
+          return acc;
+        }, {});
+        sendJson(res, 200, {
+          workspace: { id: workspace.id, name: workspace.name },
+          window_days: days,
+          event_count: events.length,
+          units_by_operation: byOperation,
+          current_counters: workspace.usage,
+        });
         return;
       }
 

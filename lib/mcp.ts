@@ -656,7 +656,29 @@ class MCPServer {
 
     if (!res.ok) {
       const text = await res.text();
-      throw new Error(`Package API ${res.status}: ${text.slice(0, 300)}`);
+      let message = `Package API ${res.status}: ${text.slice(0, 300)}`;
+      try {
+        const parsed = JSON.parse(text) as {
+          error?: string;
+          code?: string;
+          details?: Record<string, unknown>;
+        };
+        const code = parsed.code || "UNKNOWN";
+        const apiError = parsed.error || "Package API request failed";
+        message = `Package API ${res.status} [${code}]: ${apiError}`;
+        if (code === "PLAN_REQUIRED" || code === "QUOTA_EXCEEDED" || code === "FEATURE_NOT_IN_PLAN") {
+          const upgradeUrl =
+            envOrDotEnv("XINT_BILLING_UPGRADE_URL") || "https://xint.dev/pricing";
+          message = `${message}. Upgrade: ${upgradeUrl}`;
+          const feature = parsed.details?.required_feature;
+          if (typeof feature === "string" && feature) {
+            message = `${message} (required_feature=${feature})`;
+          }
+        }
+      } catch {
+        // non-json response; keep text slice
+      }
+      throw new Error(message);
     }
 
     const contentType = res.headers.get("content-type") || "";

@@ -18,6 +18,7 @@ data/exports/*.md
 data/exports/*.json
 data/snapshots/*.json
 reports/releases/*.md
+references/monetization-plan.md
 
 # Dependencies
 node_modules/
