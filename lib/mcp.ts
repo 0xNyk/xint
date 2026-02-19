@@ -643,9 +643,11 @@ class MCPServer {
       );
     }
     const apiKey = envOrDotEnv("XINT_PACKAGE_API_KEY");
+    const workspaceId = envOrDotEnv("XINT_WORKSPACE_ID");
     const url = `${baseUrl.replace(/\/+$/, "")}${path}`;
     const headers: Record<string, string> = {};
     if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+    if (workspaceId) headers["x-workspace-id"] = workspaceId;
     if (body !== undefined) headers["Content-Type"] = "application/json";
 
     const res = await fetch(url, {
