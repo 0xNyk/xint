@@ -29,6 +29,15 @@ interface ToolExecutionResult {
   fallbackUsed: boolean;
 }
 
+interface PackageQueryClaim {
+  claim_id: string;
+}
+
+interface PackageQueryCitation {
+  claim_id: string;
+  url: string;
+}
+
 function envOrDotEnv(key: string): string | undefined {
   const direct = process.env[key];
   if (direct && direct.trim()) return direct.trim();
@@ -39,6 +48,54 @@ function envOrDotEnv(key: string): string | undefined {
     if (m?.[1]) return m[1].trim();
   } catch {}
   return undefined;
+}
+
+function asObject(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function ensurePackageQueryCitations(data: unknown, requireCitations: boolean): void {
+  if (!requireCitations) return;
+  const obj = asObject(data);
+  if (!obj) {
+    throw new Error("Package API query response must be a JSON object.");
+  }
+
+  const claimsRaw = obj.claims;
+  const citationsRaw = obj.citations;
+  const claims = Array.isArray(claimsRaw) ? claimsRaw : [];
+  const citations = Array.isArray(citationsRaw) ? citationsRaw : [];
+
+  if (claims.length > 0 && citations.length === 0) {
+    throw new Error("Package API query response missing citations while require_citations=true.");
+  }
+
+  const claimIds = new Set<string>();
+  for (const item of claims) {
+    const claim = asObject(item) as PackageQueryClaim | null;
+    if (!claim?.claim_id || typeof claim.claim_id !== "string") continue;
+    claimIds.add(claim.claim_id);
+  }
+
+  if (claimIds.size === 0) return;
+
+  const citedClaimIds = new Set<string>();
+  for (const item of citations) {
+    const citation = asObject(item) as PackageQueryCitation | null;
+    if (!citation) continue;
+    if (typeof citation.claim_id !== "string" || !citation.claim_id) continue;
+    if (typeof citation.url !== "string" || !citation.url) continue;
+    citedClaimIds.add(citation.claim_id);
+  }
+
+  for (const claimId of claimIds) {
+    if (!citedClaimIds.has(claimId)) {
+      throw new Error(
+        `Package API query response has uncited claim '${claimId}' while require_citations=true.`
+      );
+    }
+  }
 }
 
 // Tool definitions
@@ -569,20 +626,22 @@ export class MCPServer {
       }
 
       case "xint_package_query": {
+        const requireCitations = args.requireCitations !== undefined
+          ? Boolean(args.requireCitations)
+          : (args.require_citations !== undefined ? Boolean(args.require_citations) : true);
         const payload = {
           query: String(args.query || ""),
           package_ids: Array.isArray(args.packageIds)
             ? args.packageIds
             : (Array.isArray(args.package_ids) ? args.package_ids : []),
           max_claims: Number(args.maxClaims || args.max_claims || 10),
-          require_citations: args.requireCitations !== undefined
-            ? Boolean(args.requireCitations)
-            : (args.require_citations !== undefined ? Boolean(args.require_citations) : true),
+          require_citations: requireCitations,
         };
         if (!payload.query || payload.package_ids.length === 0) {
           throw new Error("Missing query or packageIds/package_ids");
         }
         const data = await this.callPackageApi("POST", "/query", payload);
+        ensurePackageQueryCitations(data, requireCitations);
         return { data, fallbackUsed: false };
       }
 
