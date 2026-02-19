@@ -7,7 +7,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
-import { randomUUID } from "crypto";
+import { createHmac, timingSafeEqual, randomUUID } from "crypto";
 
 interface TimeWindow {
   from: string;
@@ -56,6 +56,7 @@ interface Store {
   audit_events: AuditEvent[];
   workspaces?: Record<string, WorkspaceRecord>;
   usage_events?: UsageEvent[];
+  billing_events?: BillingEvent[];
 }
 
 type PlanName = "free" | "pro" | "team" | "enterprise";
@@ -120,6 +121,14 @@ interface ApiKeyBinding {
   workspace_name?: string;
 }
 
+interface BillingEvent {
+  id: string;
+  type: string;
+  workspace_id: string;
+  payload: Record<string, unknown>;
+  received_at: string;
+}
+
 const STORE_PATH = join(import.meta.dir, "..", "data", "package-api-store.json");
 const API_PREFIX = "/v1";
 const DEFAULT_TTL_SECONDS = 21_600;
@@ -163,6 +172,7 @@ function loadStore(): Store {
       audit_events: parsed.audit_events || [],
       workspaces: parsed.workspaces || {},
       usage_events: parsed.usage_events || [],
+      billing_events: parsed.billing_events || [],
     };
   } catch {
     return { packages: {}, audit_events: [] };
@@ -213,6 +223,25 @@ function addUsageEvent(
   });
   if (store.usage_events.length > 20_000) {
     store.usage_events = store.usage_events.slice(0, 20_000);
+  }
+}
+
+function addBillingEvent(
+  store: Store,
+  type: string,
+  workspaceId: string,
+  payload: Record<string, unknown>
+): void {
+  if (!store.billing_events) store.billing_events = [];
+  store.billing_events.unshift({
+    id: `bil_${randomUUID().slice(0, 8)}`,
+    type,
+    workspace_id: workspaceId,
+    payload,
+    received_at: nowIso(),
+  });
+  if (store.billing_events.length > 10_000) {
+    store.billing_events = store.billing_events.slice(0, 10_000);
   }
 }
 
@@ -321,6 +350,22 @@ async function readJsonBody(req: any): Promise<Record<string, unknown>> {
   const raw = Buffer.concat(chunks).toString("utf-8").trim();
   if (!raw) return {};
   return JSON.parse(raw) as Record<string, unknown>;
+}
+
+async function readRawBody(req: any): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) {
+    chunks.push(Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks).toString("utf-8");
+}
+
+function verifyBillingSignature(rawBody: string, signature: string, secret: string): boolean {
+  const expected = createHmac("sha256", secret).update(rawBody).digest("hex");
+  const a = Buffer.from(signature);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
 }
 
 function readBearerToken(req: any): string | undefined {
@@ -465,6 +510,85 @@ export async function cmdPackageApiServer(argv: string[]): Promise<void> {
       const actor = asActor(req);
       const requestId = asRequestId(req);
       const store = loadStore();
+      const isBillingWebhook = method === "POST" && pathname === `${API_PREFIX}/billing/webhook`;
+
+      if (isBillingWebhook) {
+        const secret = process.env.XINT_BILLING_WEBHOOK_SECRET;
+        const rawBody = await readRawBody(req);
+        const signature = String(req.headers["x-billing-signature"] || "").trim();
+
+        if (secret) {
+          if (!signature) {
+            sendApiError(res, 401, "UNAUTHORIZED", "Missing billing webhook signature.");
+            return;
+          }
+          if (!verifyBillingSignature(rawBody, signature, secret)) {
+            sendApiError(res, 401, "UNAUTHORIZED", "Invalid billing webhook signature.");
+            return;
+          }
+        }
+
+        let event: Record<string, unknown>;
+        try {
+          event = rawBody.trim() ? (JSON.parse(rawBody) as Record<string, unknown>) : {};
+        } catch {
+          sendApiError(res, 400, "INVALID_REQUEST", "Webhook payload must be valid JSON.");
+          return;
+        }
+
+        const eventType = String(event.type || "").trim();
+        const targetWorkspaceId =
+          String(event.workspace_id || req.headers["x-workspace-id"] || DEFAULT_WORKSPACE_ID).trim() ||
+          DEFAULT_WORKSPACE_ID;
+        if (!eventType) {
+          sendApiError(res, 400, "INVALID_REQUEST", "Webhook event type is required.");
+          return;
+        }
+
+        const targetPlan = parsePlanName(String(event.plan || process.env.XINT_PACKAGE_API_PLAN || DEFAULT_PLAN_NAME));
+        const targetWorkspace = ensureWorkspaceRecord(store, targetWorkspaceId, targetPlan);
+
+        if (eventType === "billing.plan.updated" || eventType === "billing.subscription.updated") {
+          targetWorkspace.entitlements = makeEntitlements(targetPlan);
+          addAuditEvent(store, "billing.plan.updated", actor, {
+            workspace_id: targetWorkspaceId,
+            plan: targetPlan,
+          });
+        }
+
+        if (eventType === "billing.subscription.canceled") {
+          targetWorkspace.entitlements = makeEntitlements("free");
+          addAuditEvent(store, "billing.plan.downgraded", actor, {
+            workspace_id: targetWorkspaceId,
+            plan: "free",
+          });
+        }
+
+        const limits = event.limits as Record<string, unknown> | undefined;
+        if (limits && typeof limits === "object") {
+          const maxPackagesRaw = Number(limits.max_packages);
+          const maxClaimsRaw = Number(limits.max_query_claims);
+          if (Number.isFinite(maxPackagesRaw) && maxPackagesRaw > 0) {
+            targetWorkspace.entitlements.limits.max_packages = maxPackagesRaw;
+          }
+          if (Number.isFinite(maxClaimsRaw) && maxClaimsRaw > 0) {
+            targetWorkspace.entitlements.limits.max_query_claims = maxClaimsRaw;
+          }
+          targetWorkspace.entitlements.updated_at = nowIso();
+        }
+
+        addBillingEvent(store, eventType, targetWorkspaceId, event);
+        saveStore(store);
+        sendJson(res, 202, {
+          accepted: true,
+          event_type: eventType,
+          workspace_id: targetWorkspaceId,
+          plan: targetWorkspace.entitlements.plan,
+          request_id: requestId,
+        });
+        return;
+      }
+
       const workspace = resolveAuthorizedWorkspace(req, res, store);
       if (!workspace) return;
 
@@ -775,6 +899,15 @@ export async function cmdPackageApiServer(argv: string[]): Promise<void> {
           units_by_operation: byOperation,
           current_counters: workspace.usage,
         });
+        return;
+      }
+
+      if (method === "GET" && pathname === `${API_PREFIX}/billing/events`) {
+        const limit = Math.min(parseInt(reqUrl.searchParams.get("limit") || "100", 10), 1000);
+        const items = (store.billing_events || [])
+          .filter((event) => event.workspace_id === workspace.id)
+          .slice(0, limit);
+        sendJson(res, 200, { items });
         return;
       }
 

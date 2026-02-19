@@ -333,6 +333,10 @@ xint billing usage --days=30
 
 These commands read from the local/hosted package API (`XINT_PACKAGE_API_BASE_URL`).
 
+For hosted billing sync, package API also supports:
+- `POST /v1/billing/webhook` (provider-agnostic event ingest)
+- `GET /v1/billing/events?limit=100` (workspace billing event history)
+
 ## Configuration Variables (Local Only)
 
 | Variable | Required | Description |
@@ -345,6 +349,8 @@ These commands read from the local/hosted package API (`XINT_PACKAGE_API_BASE_UR
 | `XINT_PACKAGE_API_KEYS` | No | JSON map of API keys to `workspace_id` + `plan` |
 | `XINT_PACKAGE_API_PLAN` | No | Default workspace plan (`free\|pro\|team\|enterprise`) |
 | `XINT_WORKSPACE_ID` | No | Workspace id used by local `xint billing *` calls |
+| `XINT_BILLING_WEBHOOK_SECRET` | No | HMAC secret for `/v1/billing/webhook` signature validation |
+| `XINT_BILLING_UPGRADE_URL` | No | Upgrade URL shown in MCP plan/quota errors |
 
 ## File Structure
 
