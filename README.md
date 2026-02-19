@@ -92,6 +92,27 @@ For bookmarks, likes, lists, blocks/mutes, and follower tracking:
 
 Run `xint auth setup` to complete OAuth flow.
 
+## Deployment Modes
+
+### Self-hosted (OSS default)
+
+- Run everything locally from this repo.
+- Package API calls are local unless you set cloud endpoints.
+- Good for development and private workflows.
+
+### Hosted cloud control plane (`xint-cloud`)
+
+- Point package API features at your hosted control plane:
+  - `XINT_PACKAGE_API_BASE_URL=http://localhost:8787/v1` (or your deployed URL)
+  - `XINT_PACKAGE_API_KEY=<workspace_api_key>`
+  - `XINT_WORKSPACE_ID=<workspace_id>`
+- Optional billing upgrade link shown on quota/plan errors:
+  - `XINT_BILLING_UPGRADE_URL=https://your-app/pricing`
+
+Notes:
+- If `XINT_PACKAGE_API_BASE_URL` is unset, package API MCP tools return a setup error.
+- `xint-cloud` should remain private; `xint` and `xint-rs` stay public OSS clients.
+
 ## Agent-Native Capabilities Manifest
 
 `xint` now ships a machine-readable manifest for agent runtime allowlists and tool routing:
