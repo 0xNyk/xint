@@ -10,6 +10,7 @@ GITHUB_ORG="0xNyk"
 
 PUBLISH_CLAWDHUB=true
 PUBLISH_SKILLSH=false
+PUBLISH_HOMEBREW=true
 UPDATE_DOCS=false
 DRY_RUN=false
 ALLOW_DIRTY=false
@@ -31,6 +32,8 @@ fi
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_PATH_XINT="${REPO_PATH_XINT:-}"
 REPO_PATH_XINT_RS="${REPO_PATH_XINT_RS:-}"
+REPO_PATH_HOMEBREW="${REPO_PATH_HOMEBREW:-}"
+HOMEBREW_TAP_REPO="homebrew-xint"
 REPORT_DIR="${RELEASE_REPORT_DIR:-$ROOT_DIR/reports/releases}"
 
 usage() {
@@ -46,6 +49,7 @@ Options:
   --ai-skill       Enable both ClawdHub and skills.sh publishing
   --no-clawdhub    Disable ClawdHub publishing for this run
   --skillsh        Enable skills.sh publishing
+  --no-homebrew    Disable Homebrew tap formula update/publish
   --docs           Update README/changelog files when present
   --all            Enable --ai-skill and --docs
   --no-auto-notes  Disable GitHub auto-generated release notes
@@ -65,6 +69,7 @@ Environment variables:
   CHANGELOG_SECURITY
   TWEET_DRAFT
   RELEASE_REPORT_DIR
+  REPO_PATH_HOMEBREW
 USAGE
 }
 
@@ -138,6 +143,37 @@ resolve_repo_path() {
 repo_exists() {
   local repo="$1"
   [[ -n "$(resolve_repo_path "$repo")" ]]
+}
+
+resolve_homebrew_path() {
+  local candidate=""
+
+  if [[ -n "$REPO_PATH_HOMEBREW" && -d "$REPO_PATH_HOMEBREW/.git" ]]; then
+    (cd "$REPO_PATH_HOMEBREW" && pwd)
+    return
+  fi
+
+  if [[ -d "$ROOT_DIR/$HOMEBREW_TAP_REPO/.git" ]]; then
+    candidate="$ROOT_DIR/$HOMEBREW_TAP_REPO"
+  elif [[ -d "$ROOT_DIR/../$HOMEBREW_TAP_REPO/.git" ]]; then
+    candidate="$ROOT_DIR/../$HOMEBREW_TAP_REPO"
+  fi
+
+  if [[ -n "$candidate" ]]; then
+    (cd "$candidate" && pwd)
+  fi
+  return 0
+}
+
+homebrew_path() {
+  local path
+  path="$(resolve_homebrew_path)"
+  [[ -n "$path" ]] || die "Missing Homebrew tap directory '$HOMEBREW_TAP_REPO' (set REPO_PATH_HOMEBREW to override)."
+  printf '%s' "$path"
+}
+
+homebrew_repo_exists() {
+  [[ -n "$(resolve_homebrew_path)" ]]
 }
 
 run_in_repo() {
@@ -576,6 +612,124 @@ publish_skillsh() {
   fi
 }
 
+sha256_for_url() {
+  local url="$1"
+  local tmp
+  tmp="$(mktemp)"
+
+  if ! curl -fsSL "$url" -o "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+
+  shasum -a 256 "$tmp" | awk '{print $1}'
+  rm -f "$tmp"
+}
+
+update_homebrew_formula_file() {
+  local formula_file="$1"
+  local mac_sha="$2"
+  local source_sha="$3"
+  local tmp_file
+  tmp_file="$formula_file.release-tmp"
+
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "Would update Homebrew formula: $formula_file"
+    return
+  fi
+
+  perl -0pi -e 's#releases/download/\d+\.\d+\.\d+(?:\.\d+)?/xint-rs-macos-arm64-\d+\.\d+\.\d+(?:\.\d+)?\.tar\.gz#releases/download/'"$VERSION"'/xint-rs-macos-arm64-'"$VERSION"'.tar.gz#g' "$formula_file"
+  perl -0pi -e 's#archive/refs/tags/\d+\.\d+\.\d+(?:\.\d+)?\.tar\.gz#archive/refs/tags/'"$VERSION"'.tar.gz#g' "$formula_file"
+
+  awk -v mac="$mac_sha" -v src="$source_sha" '
+    BEGIN { sha_count = 0 }
+    /^[[:space:]]*sha256[[:space:]]*"/ {
+      sha_count++
+      if (sha_count == 1) {
+        sub(/sha256[[:space:]]*"[^"]+"/, "sha256 \"" mac "\"")
+      } else if (sha_count == 2) {
+        sub(/sha256[[:space:]]*"[^"]+"/, "sha256 \"" src "\"")
+      }
+    }
+    { print }
+    END {
+      if (sha_count < 2) {
+        exit 2
+      }
+    }
+  ' "$formula_file" > "$tmp_file" || {
+    rm -f "$tmp_file"
+    die "Failed updating sha256 entries in $formula_file"
+  }
+
+  mv "$tmp_file" "$formula_file"
+}
+
+publish_homebrew_tap() {
+  local tap_path formula_xint formula_xint_rs
+  local binary_url source_url binary_sha source_sha
+
+  if [[ "$PUBLISH_HOMEBREW" != "true" ]]; then
+    return
+  fi
+
+  if ! homebrew_repo_exists; then
+    warn "Homebrew tap repo '$HOMEBREW_TAP_REPO' not found; skipping formula publish"
+    return
+  fi
+
+  if [[ "$DRY_RUN" != "true" ]]; then
+    command -v curl >/dev/null 2>&1 || die "curl is required to update Homebrew formulas"
+    command -v shasum >/dev/null 2>&1 || die "shasum is required to update Homebrew formulas"
+  fi
+
+  tap_path="$(homebrew_path)"
+  formula_xint="$tap_path/Formula/xint.rb"
+  formula_xint_rs="$tap_path/Formula/xint-rs.rb"
+
+  [[ -f "$formula_xint" ]] || die "Missing formula: $formula_xint"
+  [[ -f "$formula_xint_rs" ]] || die "Missing formula: $formula_xint_rs"
+
+  if [[ "$ALLOW_DIRTY" != "true" ]]; then
+    git -C "$tap_path" diff --quiet --ignore-submodules -- && \
+      git -C "$tap_path" diff --cached --quiet --ignore-submodules -- && \
+      [[ -z "$(git -C "$tap_path" ls-files --others --exclude-standard)" ]] || \
+      die "Homebrew tap repo is dirty; use --allow-dirty or clean $tap_path first"
+  fi
+
+  binary_url="https://github.com/$GITHUB_ORG/$REPO_NAME_ALT/releases/download/$VERSION/xint-rs-macos-arm64-$VERSION.tar.gz"
+  source_url="https://github.com/$GITHUB_ORG/$REPO_NAME_ALT/archive/refs/tags/$VERSION.tar.gz"
+
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "Would compute Homebrew SHA256 for:"
+    log "- $binary_url"
+    log "- $source_url"
+    binary_sha="<dry-run-binary-sha256>"
+    source_sha="<dry-run-source-sha256>"
+  else
+    log "Computing Homebrew SHA256 for release artifacts"
+    binary_sha="$(sha256_for_url "$binary_url")" || die "Failed to download/hash binary artifact: $binary_url"
+    source_sha="$(sha256_for_url "$source_url")" || die "Failed to download/hash source artifact: $source_url"
+  fi
+
+  update_homebrew_formula_file "$formula_xint" "$binary_sha" "$source_sha"
+  update_homebrew_formula_file "$formula_xint_rs" "$binary_sha" "$source_sha"
+
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "Would commit and push Homebrew tap formula updates in $tap_path"
+    return
+  fi
+
+  git -C "$tap_path" add -- Formula/xint.rb Formula/xint-rs.rb
+  if git -C "$tap_path" diff --cached --quiet; then
+    warn "No Homebrew formula changes detected; skipping tap commit"
+    return
+  fi
+
+  git -C "$tap_path" commit -m "chore(release): bump formulas to v$VERSION"
+  git -C "$tap_path" push origin HEAD
+}
+
 create_github_release() {
   local repo="$1"
   local notes="$2"
@@ -823,6 +977,9 @@ while [[ $# -gt 0 ]]; do
     --skillsh)
       PUBLISH_SKILLSH=true
       ;;
+    --no-homebrew)
+      PUBLISH_HOMEBREW=false
+      ;;
     --docs)
       UPDATE_DOCS=true
       ;;
@@ -967,6 +1124,9 @@ if [[ -n "$REPO_NAME_ALT" ]]; then
   create_github_release "$REPO_NAME_ALT" "$RELEASE_NOTES" "$USE_AUTO_NOTES"
 fi
 
+log "Publishing Homebrew tap formulas"
+publish_homebrew_tap
+
 RELEASE_URL_PRIMARY="$(release_url_for_repo "$REPO_NAME")"
 RELEASE_URL_ALT=""
 if [[ -n "$REPO_NAME_ALT" ]]; then
@@ -1010,5 +1170,16 @@ $TWEET_DRAFT
 
 ==============================
 EOF_BANNER
+
+cat <<EOF_HOMEBREW
+
+==============================
+Homebrew update reminder
+==============================
+brew update
+brew upgrade xint
+
+==============================
+EOF_HOMEBREW
 
 log "Release pipeline complete"
