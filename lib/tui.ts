@@ -416,7 +416,6 @@ async function selectOption(
       if (key.name === "return") {
         const selected = MENU_OPTIONS[uiState.activeIndex];
         cleanup();
-        output.write("\x1b[2J\x1b[H");
         resolve(selected?.key ?? "0");
         return;
       }
@@ -469,7 +468,6 @@ async function selectOption(
           if (match) {
             uiState.activeIndex = MENU_OPTIONS.findIndex((option) => option.key === match.key);
             cleanup();
-            output.write("\x1b[2J\x1b[H");
             resolve(match.key);
             return;
           }
@@ -483,7 +481,6 @@ async function selectOption(
       const normalized = normalizeChoice(typeof str === "string" ? str : "");
       if (normalized) {
         cleanup();
-        output.write("\x1b[2J\x1b[H");
         resolve(normalized);
       }
     };
@@ -582,6 +579,18 @@ function promptWithDefault(value: string, previous?: string): string {
   return previous ?? "";
 }
 
+async function questionInDashboard(
+  rl: ReturnType<typeof createInterface>,
+  label: string,
+  uiState: UiState,
+  session: SessionState,
+): Promise<string> {
+  if (input.isTTY && output.isTTY) {
+    renderDashboard(uiState, session);
+  }
+  return await rl.question(`\n${label}`);
+}
+
 export async function cmdTui(): Promise<void> {
   const initialIndex = MENU_OPTIONS.findIndex((option) => option.key === "1");
   const uiState: UiState = {
@@ -612,7 +621,12 @@ export async function cmdTui(): Promise<void> {
           case "1": {
             const query = requireInput(
               promptWithDefault(
-                await rl.question(`Search query${session.lastSearch ? ` [${session.lastSearch}]` : ""}: `),
+                await questionInDashboard(
+                  rl,
+                  `Search query${session.lastSearch ? ` [${session.lastSearch}]` : ""}: `,
+                  uiState,
+                  session,
+                ),
                 session.lastSearch,
               ),
               "Query",
@@ -626,8 +640,11 @@ export async function cmdTui(): Promise<void> {
           }
           case "2": {
             const location = promptWithDefault(
-              await rl.question(
+              await questionInDashboard(
+                rl,
                 `Location (blank for worldwide)${session.lastLocation ? ` [${session.lastLocation}]` : ""}: `,
+                uiState,
+                session,
               ),
               session.lastLocation,
             );
@@ -641,8 +658,11 @@ export async function cmdTui(): Promise<void> {
           case "3": {
             const username = requireInput(
               promptWithDefault(
-                await rl.question(
+                await questionInDashboard(
+                  rl,
                   `Username (@optional)${session.lastUsername ? ` [${session.lastUsername}]` : ""}: `,
+                  uiState,
+                  session,
                 ),
                 session.lastUsername,
               ),
@@ -658,7 +678,12 @@ export async function cmdTui(): Promise<void> {
           case "4": {
             const tweetRef = requireInput(
               promptWithDefault(
-                await rl.question(`Tweet ID or URL${session.lastTweetRef ? ` [${session.lastTweetRef}]` : ""}: `),
+                await questionInDashboard(
+                  rl,
+                  `Tweet ID or URL${session.lastTweetRef ? ` [${session.lastTweetRef}]` : ""}: `,
+                  uiState,
+                  session,
+                ),
                 session.lastTweetRef,
               ),
               "Tweet ID/URL",
@@ -673,8 +698,11 @@ export async function cmdTui(): Promise<void> {
           case "5": {
             const url = requireInput(
               promptWithDefault(
-                await rl.question(
+                await questionInDashboard(
+                  rl,
                   `Article URL or Tweet URL${session.lastArticleUrl ? ` [${session.lastArticleUrl}]` : ""}: `,
+                  uiState,
+                  session,
                 ),
                 session.lastArticleUrl,
               ),
