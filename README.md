@@ -364,6 +364,7 @@ For hosted billing sync, package API also supports:
 |----------|----------|-------------|
 | `X_BEARER_TOKEN` | Yes | X API v2 bearer token |
 | `XAI_API_KEY` | No | xAI key for analyze/report |
+| `XINT_ARTICLE_TIMEOUT_SEC` | No | Article fetch timeout seconds (default 30, range 5-120) |
 | `X_CLIENT_ID` | No | OAuth for bookmarks/likes/lists/blocks/mutes |
 | `XINT_PACKAGE_API_BASE_URL` | No | Package API base URL for MCP package tools/billing |
 | `XINT_PACKAGE_API_KEY` | No | Legacy single bearer key for package API auth |

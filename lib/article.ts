@@ -66,6 +66,7 @@ function getXaiKey(): string {
 
 const XAI_RESPONSES_ENDPOINT = "https://api.x.ai/v1/responses";
 const DEFAULT_MODEL = "grok-4";
+const DEFAULT_TIMEOUT_SEC = 30;
 
 const ARTICLE_EXTRACT_PROMPT = `Read the article at this URL and extract its content. Return a JSON object with these fields:
 - title: article title
@@ -96,29 +97,47 @@ export async function fetchArticle(
 
   const apiKey = getXaiKey();
   const model = opts.model || DEFAULT_MODEL;
+  const timeoutMs = resolveArticleTimeoutMs();
+  const timeoutSec = Math.floor(timeoutMs / 1000);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort("article_timeout"), timeoutMs);
 
-  const res = await fetch(XAI_RESPONSES_ENDPOINT, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model,
-      tools: [
-        {
-          type: "web_search",
-          allowed_domains: [parsed.hostname],
-        },
-      ],
-      input: [
-        {
-          role: "user",
-          content: `${ARTICLE_EXTRACT_PROMPT}\n\nURL: ${url}`,
-        },
-      ],
-    }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(XAI_RESPONSES_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model,
+        tools: [
+          {
+            type: "web_search",
+            allowed_domains: [parsed.hostname],
+          },
+        ],
+        input: [
+          {
+            role: "user",
+            content: `${ARTICLE_EXTRACT_PROMPT}\n\nURL: ${url}`,
+          },
+        ],
+      }),
+    });
+  } catch (error: unknown) {
+    if (controller.signal.aborted) {
+      throw new Error(
+        `Article fetch timed out after ${timeoutSec}s for ${url}. ` +
+        `Set XINT_ARTICLE_TIMEOUT_SEC (5-120) to tune this.`
+      );
+    }
+    throw new Error(`Article fetch request failed for ${url}: ${(error as Error).message}`);
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   if (!res.ok) {
     const body = await res.text();
@@ -130,7 +149,10 @@ export async function fetchArticle(
   // Extract text from response output
   const text = extractResponseText(data);
   if (!text) {
-    throw new Error(`No content returned for ${url}`);
+    throw new Error(
+      `No article content returned for ${url}. ` +
+      `The source may be blocked/unavailable from this environment.`
+    );
   }
 
   // Parse the JSON response from Grok
@@ -147,6 +169,13 @@ export async function fetchArticle(
   article.ttr = Math.ceil(words / 238);
 
   return article;
+}
+
+export function resolveArticleTimeoutMs(): number {
+  const raw = Number.parseInt(String(process.env.XINT_ARTICLE_TIMEOUT_SEC || DEFAULT_TIMEOUT_SEC), 10);
+  if (!Number.isFinite(raw)) return DEFAULT_TIMEOUT_SEC * 1000;
+  const clamped = Math.min(Math.max(raw, 5), 120);
+  return clamped * 1000;
 }
 
 // ---------------------------------------------------------------------------

@@ -94,6 +94,7 @@ import { cmdLists } from "./lib/lists";
 import { cmdBlocks, cmdMutes } from "./lib/moderation";
 import { cmdStream, cmdStreamRules } from "./lib/stream";
 import { cmdMedia } from "./lib/media";
+import { extractTweetId } from "./lib/media";
 import { cmdCapabilities } from "./lib/capabilities";
 import { buildOutputMeta, printJsonWithMeta, printJsonlWithMeta } from "./lib/output-meta";
 import { cmdAuthDoctor, cmdHealth } from "./lib/health";
@@ -664,7 +665,7 @@ async function cmdArticle() {
     let article;
     
     // Check if it's an X tweet URL - extract linked article
-    if (url.includes("x.com/") && url.includes("/status/")) {
+    if (extractTweetId(url)) {
       console.log("🔍 Fetching tweet to extract linked article...");
       const { fetchTweetForArticle } = await import("./lib/article");
       const { tweet, articleUrl } = await fetchTweetForArticle(url);
