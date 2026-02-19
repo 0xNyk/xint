@@ -321,6 +321,18 @@ xint costs week      # Last 7 days
 xint costs budget    # Show/set limits
 ```
 
+## Package API Billing
+
+```bash
+# Show workspace plan, limits, and feature gates
+xint billing status
+
+# Show usage units by operation over a window
+xint billing usage --days=30
+```
+
+These commands read from the local/hosted package API (`XINT_PACKAGE_API_BASE_URL`).
+
 ## Configuration Variables (Local Only)
 
 | Variable | Required | Description |
@@ -328,6 +340,11 @@ xint costs budget    # Show/set limits
 | `X_BEARER_TOKEN` | Yes | X API v2 bearer token |
 | `XAI_API_KEY` | No | xAI key for analyze/report |
 | `X_CLIENT_ID` | No | OAuth for bookmarks/likes/lists/blocks/mutes |
+| `XINT_PACKAGE_API_BASE_URL` | No | Package API base URL for MCP package tools/billing |
+| `XINT_PACKAGE_API_KEY` | No | Legacy single bearer key for package API auth |
+| `XINT_PACKAGE_API_KEYS` | No | JSON map of API keys to `workspace_id` + `plan` |
+| `XINT_PACKAGE_API_PLAN` | No | Default workspace plan (`free\|pro\|team\|enterprise`) |
+| `XINT_WORKSPACE_ID` | No | Workspace id used by local `xint billing *` calls |
 
 ## File Structure
 

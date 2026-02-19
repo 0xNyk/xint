@@ -113,6 +113,13 @@ interface UsageEvent {
   created_at: string;
 }
 
+interface ApiKeyBinding {
+  api_key: string;
+  workspace_id: string;
+  plan?: PlanName;
+  workspace_name?: string;
+}
+
 const STORE_PATH = join(import.meta.dir, "..", "data", "package-api-store.json");
 const API_PREFIX = "/v1";
 const DEFAULT_TTL_SECONDS = 21_600;
@@ -222,21 +229,7 @@ function makeEntitlements(plan: PlanName): WorkspaceEntitlements {
 
 function ensureWorkspaceStore(store: Store): void {
   if (!store.workspaces) store.workspaces = {};
-  if (!store.workspaces[DEFAULT_WORKSPACE_ID]) {
-    const plan = parsePlanName(process.env.XINT_PACKAGE_API_PLAN);
-    store.workspaces[DEFAULT_WORKSPACE_ID] = {
-      id: DEFAULT_WORKSPACE_ID,
-      name: DEFAULT_WORKSPACE_NAME,
-      entitlements: makeEntitlements(plan),
-      usage: {
-        package_create_count: 0,
-        package_query_count: 0,
-        package_refresh_count: 0,
-        package_publish_count: 0,
-        updated_at: nowIso(),
-      },
-    };
-  }
+  ensureWorkspaceRecord(store, DEFAULT_WORKSPACE_ID, parsePlanName(process.env.XINT_PACKAGE_API_PLAN), DEFAULT_WORKSPACE_NAME);
 }
 
 function parsePlanName(raw: string | undefined): PlanName {
@@ -247,14 +240,18 @@ function parsePlanName(raw: string | undefined): PlanName {
   return DEFAULT_PLAN_NAME;
 }
 
-function resolveWorkspace(req: any, store: Store): WorkspaceRecord {
-  ensureWorkspaceStore(store);
-  const requested = String(req.headers["x-workspace-id"] || DEFAULT_WORKSPACE_ID).trim() || DEFAULT_WORKSPACE_ID;
-  if (!store.workspaces![requested]) {
-    store.workspaces![requested] = {
-      id: requested,
-      name: `Workspace ${requested}`,
-      entitlements: makeEntitlements(parsePlanName(process.env.XINT_PACKAGE_API_PLAN)),
+function ensureWorkspaceRecord(
+  store: Store,
+  workspaceId: string,
+  plan: PlanName,
+  workspaceName?: string
+): WorkspaceRecord {
+  if (!store.workspaces) store.workspaces = {};
+  if (!store.workspaces[workspaceId]) {
+    store.workspaces[workspaceId] = {
+      id: workspaceId,
+      name: workspaceName || `Workspace ${workspaceId}`,
+      entitlements: makeEntitlements(plan),
       usage: {
         package_create_count: 0,
         package_query_count: 0,
@@ -263,14 +260,31 @@ function resolveWorkspace(req: any, store: Store): WorkspaceRecord {
         updated_at: nowIso(),
       },
     };
+  } else if (store.workspaces[workspaceId].entitlements.plan !== plan) {
+    // Allow binding-driven plan overrides while keeping existing usage history.
+    store.workspaces[workspaceId].entitlements = makeEntitlements(plan);
   }
-  return store.workspaces![requested];
+  return store.workspaces[workspaceId];
 }
 
 function sendMonetizationError(
   res: any,
   status: number,
   code: "PLAN_REQUIRED" | "QUOTA_EXCEEDED" | "FEATURE_NOT_IN_PLAN",
+  message: string,
+  details: Record<string, unknown> = {}
+): void {
+  sendJson(res, status, {
+    error: message,
+    code,
+    details,
+  });
+}
+
+function sendApiError(
+  res: any,
+  status: number,
+  code: string,
   message: string,
   details: Record<string, unknown> = {}
 ): void {
@@ -309,13 +323,102 @@ async function readJsonBody(req: any): Promise<Record<string, unknown>> {
   return JSON.parse(raw) as Record<string, unknown>;
 }
 
-function requireAuthIfConfigured(req: any, res: any): boolean {
-  const requiredKey = process.env.XINT_PACKAGE_API_KEY;
-  if (!requiredKey) return true;
+function readBearerToken(req: any): string | undefined {
   const auth = req.headers.authorization;
-  if (auth === `Bearer ${requiredKey}`) return true;
-  sendJson(res, 401, { error: "Unauthorized" });
-  return false;
+  if (typeof auth !== "string") return undefined;
+  if (!auth.startsWith("Bearer ")) return undefined;
+  const token = auth.slice("Bearer ".length).trim();
+  return token || undefined;
+}
+
+function parseApiKeyBindings(): ApiKeyBinding[] {
+  const raw = process.env.XINT_PACKAGE_API_KEYS;
+  if (!raw?.trim()) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (Array.isArray(parsed)) {
+      return parsed
+        .map((entry) => {
+          const item = entry as Record<string, unknown>;
+          return {
+            api_key: String(item.api_key || "").trim(),
+            workspace_id: String(item.workspace_id || "").trim(),
+            plan: parsePlanName(String(item.plan || "")),
+            workspace_name: String(item.workspace_name || "").trim() || undefined,
+          } as ApiKeyBinding;
+        })
+        .filter((entry) => entry.api_key && entry.workspace_id);
+    }
+    if (parsed && typeof parsed === "object") {
+      return Object.entries(parsed as Record<string, unknown>)
+        .map(([apiKey, value]) => {
+          const item = value as Record<string, unknown>;
+          return {
+            api_key: String(apiKey || "").trim(),
+            workspace_id: String(item.workspace_id || "").trim(),
+            plan: parsePlanName(String(item.plan || "")),
+            workspace_name: String(item.workspace_name || "").trim() || undefined,
+          } as ApiKeyBinding;
+        })
+        .filter((entry) => entry.api_key && entry.workspace_id);
+    }
+  } catch {
+    // Invalid env payload; ignore and fall back to legacy auth mode.
+  }
+  return [];
+}
+
+function resolveAuthorizedWorkspace(req: any, res: any, store: Store): WorkspaceRecord | null {
+  ensureWorkspaceStore(store);
+  const requestedWorkspaceId =
+    String(req.headers["x-workspace-id"] || DEFAULT_WORKSPACE_ID).trim() || DEFAULT_WORKSPACE_ID;
+  const token = readBearerToken(req);
+  const bindings = parseApiKeyBindings();
+
+  if (bindings.length > 0) {
+    if (!token) {
+      sendApiError(res, 401, "UNAUTHORIZED", "Missing bearer token for package API.");
+      return null;
+    }
+    const binding = bindings.find((item) => item.api_key === token);
+    if (!binding) {
+      sendApiError(res, 401, "UNAUTHORIZED", "Invalid bearer token for package API.");
+      return null;
+    }
+    if (requestedWorkspaceId && requestedWorkspaceId !== binding.workspace_id) {
+      sendApiError(
+        res,
+        403,
+        "WORKSPACE_SCOPE_VIOLATION",
+        "Token is not allowed to access the requested workspace.",
+        {
+          requested_workspace_id: requestedWorkspaceId,
+          allowed_workspace_id: binding.workspace_id,
+        }
+      );
+      return null;
+    }
+    return ensureWorkspaceRecord(
+      store,
+      binding.workspace_id,
+      binding.plan || parsePlanName(process.env.XINT_PACKAGE_API_PLAN),
+      binding.workspace_name
+    );
+  }
+
+  const requiredLegacyKey = process.env.XINT_PACKAGE_API_KEY;
+  if (requiredLegacyKey) {
+    if (token !== requiredLegacyKey) {
+      sendApiError(res, 401, "UNAUTHORIZED", "Invalid bearer token for package API.");
+      return null;
+    }
+  }
+
+  return ensureWorkspaceRecord(
+    store,
+    requestedWorkspaceId,
+    parsePlanName(process.env.XINT_PACKAGE_API_PLAN)
+  );
 }
 
 function normalizeCreateBody(body: Record<string, unknown>) {
@@ -356,19 +459,19 @@ export async function cmdPackageApiServer(argv: string[]): Promise<void> {
 
   const server = http.createServer(async (req, res) => {
     try {
-      if (!requireAuthIfConfigured(req, res)) return;
       const method = req.method || "GET";
       const reqUrl = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
       const pathname = reqUrl.pathname;
       const actor = asActor(req);
       const requestId = asRequestId(req);
       const store = loadStore();
-      const workspace = resolveWorkspace(req, store);
+      const workspace = resolveAuthorizedWorkspace(req, res, store);
+      if (!workspace) return;
 
       if (method === "POST" && pathname === `${API_PREFIX}/packages`) {
         const body = normalizeCreateBody(await readJsonBody(req));
         if (!body.name || !body.topic_query || !body.time_window.from || !body.time_window.to) {
-          sendJson(res, 400, { error: "Missing required package fields" });
+          sendApiError(res, 400, "INVALID_REQUEST", "Missing required package fields.");
           return;
         }
         const currentPackages = countPackagesForWorkspace(store, workspace.id);
@@ -427,7 +530,7 @@ export async function cmdPackageApiServer(argv: string[]): Promise<void> {
         const q = String(reqUrl.searchParams.get("q") || "").toLowerCase();
         const limit = Math.min(parseInt(reqUrl.searchParams.get("limit") || "20", 10), 100);
         if (!q) {
-          sendJson(res, 400, { error: "Missing query param q" });
+          sendApiError(res, 400, "INVALID_REQUEST", "Missing query param q.");
           return;
         }
         const items = Object.values(store.packages)
@@ -451,7 +554,7 @@ export async function cmdPackageApiServer(argv: string[]): Promise<void> {
         const packageId = decodeURIComponent(packageMatch[1]);
         const pkg = store.packages[packageId];
         if (!pkg || pkg.tenant_id !== workspace.id) {
-          sendJson(res, 404, { error: "Package not found" });
+          sendApiError(res, 404, "NOT_FOUND", "Package not found.");
           return;
         }
         addUsageEvent(store, workspace.id, actor, "package.status", 1, requestId);
@@ -465,7 +568,7 @@ export async function cmdPackageApiServer(argv: string[]): Promise<void> {
         const packageId = decodeURIComponent(snapshotsMatch[1]);
         const pkg = store.packages[packageId];
         if (!pkg || pkg.tenant_id !== workspace.id) {
-          sendJson(res, 404, { error: "Package not found" });
+          sendApiError(res, 404, "NOT_FOUND", "Package not found.");
           return;
         }
         sendJson(res, 200, { items: pkg.snapshots });
@@ -477,7 +580,7 @@ export async function cmdPackageApiServer(argv: string[]): Promise<void> {
         const packageId = decodeURIComponent(refreshMatch[1]);
         const pkg = store.packages[packageId];
         if (!pkg || pkg.tenant_id !== workspace.id) {
-          sendJson(res, 404, { error: "Package not found" });
+          sendApiError(res, 404, "NOT_FOUND", "Package not found.");
           return;
         }
         const body = (await readJsonBody(req)) as { reason?: string };
@@ -515,7 +618,7 @@ export async function cmdPackageApiServer(argv: string[]): Promise<void> {
         const packageId = decodeURIComponent(publishMatch[1]);
         const pkg = store.packages[packageId];
         if (!pkg || pkg.tenant_id !== workspace.id) {
-          sendJson(res, 404, { error: "Package not found" });
+          sendApiError(res, 404, "NOT_FOUND", "Package not found.");
           return;
         }
         if (!workspace.entitlements.features.shared_publish) {
@@ -553,8 +656,8 @@ export async function cmdPackageApiServer(argv: string[]): Promise<void> {
       if (method === "POST" && unpublishMatch) {
         const packageId = decodeURIComponent(unpublishMatch[1]);
         const pkg = store.packages[packageId];
-        if (!pkg) {
-          sendJson(res, 404, { error: "Package not found" });
+        if (!pkg || pkg.tenant_id !== workspace.id) {
+          sendApiError(res, 404, "NOT_FOUND", "Package not found.");
           return;
         }
         pkg.policy = "private";
@@ -574,7 +677,7 @@ export async function cmdPackageApiServer(argv: string[]): Promise<void> {
         const query = String(body.query || "");
         const packageIds = Array.isArray(body.package_ids) ? body.package_ids : [];
         if (!query || packageIds.length === 0) {
-          sendJson(res, 400, { error: "Missing query or package_ids" });
+          sendApiError(res, 400, "INVALID_REQUEST", "Missing query or package_ids.");
           return;
         }
 
@@ -586,7 +689,7 @@ export async function cmdPackageApiServer(argv: string[]): Promise<void> {
           .map((id) => store.packages[id])
           .filter((pkg): pkg is PackageRecord => Boolean(pkg && pkg.tenant_id === workspace.id));
         if (packages.length === 0) {
-          sendJson(res, 404, { error: "No matching packages found" });
+          sendApiError(res, 404, "NOT_FOUND", "No matching packages found.");
           return;
         }
 
