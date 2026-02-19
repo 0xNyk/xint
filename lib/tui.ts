@@ -28,6 +28,13 @@ type Theme = {
   reset: string;
 };
 
+type DashboardTab = "commands" | "output" | "help";
+
+type UiState = {
+  activeIndex: number;
+  tab: DashboardTab;
+};
+
 const MENU_OPTIONS: MenuOption[] = [
   { key: "1", label: "Search", aliases: ["search", "s"], hint: "keyword, topic, or boolean query" },
   { key: "2", label: "Trends", aliases: ["trends", "trend", "t"], hint: "location name or blank for global" },
@@ -48,8 +55,9 @@ const HELP_LINES = [
   "Hotkeys",
   "  Up/Down: Move selection",
   "  Enter: Run selected command",
+  "  Tab: Switch tabs",
   "  /: Command palette",
-  "  ?: Toggle help",
+  "  ?: Open Help tab",
   "  q or Esc: Exit",
 ];
 
@@ -109,11 +117,22 @@ function matchPalette(query: string): MenuOption | null {
   return bestScore > 0 ? best : null;
 }
 
+function tabLabel(tab: DashboardTab): string {
+  if (tab === "commands") return "Commands";
+  if (tab === "help") return "Help";
+  return "Output";
+}
+
+function nextTab(tab: DashboardTab): DashboardTab {
+  if (tab === "commands") return "output";
+  if (tab === "output") return "help";
+  return "commands";
+}
+
 function buildLeftPane(activeIndex: number): string[] {
-  const lines: string[] = ["=== xint interactive ===", "", "Menu", ""]; 
+  const lines: string[] = ["Menu", ""]; 
   MENU_OPTIONS.forEach((option, index) => {
-    const isActive = index === activeIndex;
-    const pointer = isActive ? "›" : " ";
+    const pointer = index === activeIndex ? ">" : " ";
     const aliases = option.aliases.length > 0 ? ` (${option.aliases.join(", ")})` : "";
     lines.push(`${pointer} ${option.key}) ${option.label}${aliases}`);
     lines.push(`    ${option.hint}`);
@@ -121,11 +140,27 @@ function buildLeftPane(activeIndex: number): string[] {
   return lines;
 }
 
-function buildRightPane(session: SessionState, showHelp: boolean): string[] {
-  if (showHelp) {
-    return ["=== help ===", ...HELP_LINES];
+function buildRightPane(session: SessionState, tab: DashboardTab): string[] {
+  if (tab === "help") {
+    return ["Help", "", ...HELP_LINES];
   }
-  const lines: string[] = ["=== last run ==="];
+  if (tab === "commands") {
+    return [
+      "Commands",
+      "",
+      "Search  - deep topic reconnaissance",
+      "Trends  - geo + global pulse",
+      "Profile - account intelligence snapshot",
+      "Thread  - conversation expansion",
+      "Article - fetch + parse linked content",
+      "",
+      "Tips",
+      "- Press / for fast palette",
+      "- Press Enter to execute",
+      "- Switch tab for Output/Help",
+    ];
+  }
+  const lines: string[] = ["Last run", ""];
   lines.push(`command: ${session.lastCommand ?? "-"}`);
   lines.push(`status: ${session.lastStatus ?? "-"}`);
   lines.push("");
@@ -138,39 +173,55 @@ function buildRightPane(session: SessionState, showHelp: boolean): string[] {
   return lines;
 }
 
-function renderInteractiveMenu(activeIndex: number, session: SessionState, showHelp: boolean): void {
+function renderInteractiveMenu(uiState: UiState, session: SessionState): void {
   const theme = activeTheme();
   const columns = output.columns ?? 120;
   const rows = output.rows ?? 32;
-  const leftWidth = Math.max(42, Math.floor(columns * 0.45));
-  const rightWidth = Math.max(24, columns - leftWidth - 3);
-  const totalRows = Math.max(14, rows - 2);
-  const leftLines = buildLeftPane(activeIndex);
-  const rightLines = buildRightPane(session, showHelp).slice(-totalRows);
-  const separator = " | ";
+  const leftBoxWidth = Math.max(46, Math.floor(columns * 0.45));
+  const rightBoxWidth = Math.max(30, columns - leftBoxWidth - 1);
+  const leftInner = Math.max(20, leftBoxWidth - 2);
+  const rightInner = Math.max(20, rightBoxWidth - 2);
+  const totalRows = Math.max(12, rows - 7);
+
+  const leftLines = buildLeftPane(uiState.activeIndex);
+  const rightLines = buildRightPane(session, uiState.tab).slice(-totalRows);
+  const tabs = (["commands", "output", "help"] as DashboardTab[])
+    .map((tab, index) => {
+      const label = `${index + 1}:${tabLabel(tab)}`;
+      return tab === uiState.tab ? `${theme.accent}[ ${label} ]${theme.reset}` : `[ ${label} ]`;
+    })
+    .join(" ");
 
   output.write("\x1b[2J\x1b[H");
+  output.write(`${theme.border}+${"-".repeat(Math.max(1, columns - 2))}+${theme.reset}\n`);
+  output.write(
+    `${theme.border}|${theme.reset}${padText(` xint dashboard ${tabs}`, Math.max(1, columns - 2))}${theme.border}|${theme.reset}\n`,
+  );
+  output.write(`${theme.border}+${"-".repeat(leftBoxWidth - 2)}+ +${"-".repeat(rightBoxWidth - 2)}+${theme.reset}\n`);
+
   for (let row = 0; row < totalRows; row += 1) {
     const leftRaw = leftLines[row] ?? "";
     const rightRaw = rightLines[row] ?? "";
-    const isActive = leftRaw.startsWith("› ");
-    const leftText = padText(leftRaw, leftWidth);
-    const rightText = padText(rightRaw, rightWidth);
-    if (isActive) {
-      output.write(`${theme.accent}${leftText}${theme.reset}${separator}${rightText}\n`);
-    } else {
-      output.write(`${leftText}${theme.border}${separator}${theme.reset}${theme.muted}${rightText}${theme.reset}\n`);
-    }
+    const leftText = padText(leftRaw, leftInner);
+    const rightText = padText(rightRaw, rightInner);
+    const leftSegment = leftRaw.startsWith("> ")
+      ? `${theme.accent}${leftText}${theme.reset}`
+      : `${theme.muted}${leftText}${theme.reset}`;
+    output.write(
+      `${theme.border}|${theme.reset}${leftSegment}${theme.border}|${theme.reset} ${theme.border}|${theme.reset}${theme.muted}${rightText}${theme.reset}${theme.border}|${theme.reset}\n`,
+    );
   }
 
-  const footer = " ↑↓ Navigate | Enter Run | / Palette | ? Help | q Quit ";
-  output.write(`${theme.border}${padText(footer, columns)}${theme.reset}\n`);
+  output.write(`${theme.border}+${"-".repeat(leftBoxWidth - 2)}+ +${"-".repeat(rightBoxWidth - 2)}+${theme.reset}\n`);
+  const footer = " Up/Down Navigate | Enter Run | Tab Tabs | / Palette | ? Help | q Quit ";
+  output.write(`${theme.border}|${theme.reset}${padText(footer, Math.max(1, columns - 2))}${theme.border}|${theme.reset}\n`);
+  output.write(`${theme.border}+${"-".repeat(Math.max(1, columns - 2))}+${theme.reset}\n`);
 }
 
 async function selectOption(
   rl: ReturnType<typeof createInterface>,
   session: SessionState,
-  activeIndexRef: { value: number },
+  uiState: UiState,
 ): Promise<string> {
   if (!input.isTTY || !output.isTTY || typeof input.setRawMode !== "function") {
     output.write("\n=== xint interactive ===\n");
@@ -183,8 +234,6 @@ async function selectOption(
   }
 
   emitKeypressEvents(input);
-  let activeIndex = activeIndexRef.value;
-  let showHelp = false;
 
   return await new Promise<string>((resolve) => {
     let paletteOpen = false;
@@ -198,46 +247,63 @@ async function selectOption(
     const reopenRaw = () => {
       input.setRawMode(true);
       input.resume();
-      renderInteractiveMenu(activeIndex, session, showHelp);
+      renderInteractiveMenu(uiState, session);
     };
 
     const onKeypress = (str: string | undefined, key: { name?: string; ctrl?: boolean }) => {
       if (paletteOpen) return;
 
       if (key.ctrl && key.name === "c") {
-        activeIndexRef.value = activeIndex;
         cleanup();
         resolve("0");
         return;
       }
       if (key.name === "up") {
-        activeIndex = (activeIndex - 1 + MENU_OPTIONS.length) % MENU_OPTIONS.length;
-        renderInteractiveMenu(activeIndex, session, showHelp);
+        uiState.activeIndex = (uiState.activeIndex - 1 + MENU_OPTIONS.length) % MENU_OPTIONS.length;
+        renderInteractiveMenu(uiState, session);
         return;
       }
       if (key.name === "down") {
-        activeIndex = (activeIndex + 1) % MENU_OPTIONS.length;
-        renderInteractiveMenu(activeIndex, session, showHelp);
+        uiState.activeIndex = (uiState.activeIndex + 1) % MENU_OPTIONS.length;
+        renderInteractiveMenu(uiState, session);
+        return;
+      }
+      if (key.name === "tab") {
+        uiState.tab = nextTab(uiState.tab);
+        renderInteractiveMenu(uiState, session);
         return;
       }
       if (key.name === "return") {
-        const selected = MENU_OPTIONS[activeIndex];
-        activeIndexRef.value = activeIndex;
+        const selected = MENU_OPTIONS[uiState.activeIndex];
         cleanup();
         output.write("\x1b[2J\x1b[H");
         resolve(selected?.key ?? "0");
         return;
       }
       if (key.name === "escape" || str === "q") {
-        activeIndexRef.value = activeIndex;
         cleanup();
         output.write("\x1b[2J\x1b[H");
         resolve("0");
         return;
       }
       if (str === "?") {
-        showHelp = !showHelp;
-        renderInteractiveMenu(activeIndex, session, showHelp);
+        uiState.tab = "help";
+        renderInteractiveMenu(uiState, session);
+        return;
+      }
+      if (str === "1") {
+        uiState.tab = "commands";
+        renderInteractiveMenu(uiState, session);
+        return;
+      }
+      if (str === "2") {
+        uiState.tab = "output";
+        renderInteractiveMenu(uiState, session);
+        return;
+      }
+      if (str === "3") {
+        uiState.tab = "help";
+        renderInteractiveMenu(uiState, session);
         return;
       }
       if (str === "/") {
@@ -247,8 +313,7 @@ async function selectOption(
         rl.question("\nPalette (/): ").then((query) => {
           const match = matchPalette(query);
           if (match) {
-            activeIndex = MENU_OPTIONS.findIndex((option) => option.key === match.key);
-            activeIndexRef.value = activeIndex;
+            uiState.activeIndex = MENU_OPTIONS.findIndex((option) => option.key === match.key);
             cleanup();
             output.write("\x1b[2J\x1b[H");
             resolve(match.key);
@@ -263,7 +328,6 @@ async function selectOption(
 
       const normalized = normalizeChoice(typeof str === "string" ? str : "");
       if (normalized) {
-        activeIndexRef.value = activeIndex;
         cleanup();
         output.write("\x1b[2J\x1b[H");
         resolve(normalized);
@@ -273,7 +337,7 @@ async function selectOption(
     input.setRawMode(true);
     input.resume();
     input.on("keypress", onKeypress);
-    renderInteractiveMenu(activeIndex, session, showHelp);
+    renderInteractiveMenu(uiState, session);
   });
 }
 
@@ -290,7 +354,7 @@ async function consumeStream(
   stream: ReadableStream<Uint8Array> | null,
   prefix: string,
   session: SessionState,
-  activeIndexRef: { value: number },
+  uiState: UiState,
 ): Promise<void> {
   if (!stream) return;
   const reader = stream.getReader();
@@ -306,7 +370,7 @@ async function consumeStream(
     for (const part of parts) {
       appendOutput(session, prefix ? `[${prefix}] ${part}` : part);
       if (input.isTTY && output.isTTY) {
-        renderInteractiveMenu(activeIndexRef.value, session, false);
+        renderInteractiveMenu(uiState, session);
       }
     }
   }
@@ -319,7 +383,7 @@ async function consumeStream(
 async function runSubcommand(
   args: string[],
   session: SessionState,
-  activeIndexRef: { value: number },
+  uiState: UiState,
 ): Promise<{ status: string; outputLines: string[] }> {
   const scriptPath = join(import.meta.dir, "..", "xint.ts");
   const proc = Bun.spawn({
@@ -336,12 +400,12 @@ async function runSubcommand(
     session.lastStatus = `running ${spinnerFrames[spinnerIndex % spinnerFrames.length]}`;
     spinnerIndex += 1;
     if (input.isTTY && output.isTTY) {
-      renderInteractiveMenu(activeIndexRef.value, session, false);
+      renderInteractiveMenu(uiState, session);
     }
   }, 90);
 
-  const stdoutTask = consumeStream(proc.stdout ?? null, "", session, activeIndexRef);
-  const stderrTask = consumeStream(proc.stderr ?? null, "stderr", session, activeIndexRef);
+  const stdoutTask = consumeStream(proc.stdout ?? null, "", session, uiState);
+  const stderrTask = consumeStream(proc.stderr ?? null, "stderr", session, uiState);
 
   const exitCode = await proc.exited;
   await Promise.all([stdoutTask, stderrTask]);
@@ -365,14 +429,17 @@ function promptWithDefault(value: string, previous?: string): string {
 
 export async function cmdTui(): Promise<void> {
   const initialIndex = MENU_OPTIONS.findIndex((option) => option.key === "1");
-  const activeIndexRef = { value: initialIndex >= 0 ? initialIndex : 0 };
+  const uiState: UiState = {
+    activeIndex: initialIndex >= 0 ? initialIndex : 0,
+    tab: "output",
+  };
   const session: SessionState = {
     lastOutputLines: [],
   };
   const rl = createInterface({ input, output });
   try {
     for (;;) {
-      const choice = await selectOption(rl, session, activeIndexRef);
+      const choice = await selectOption(rl, session, uiState);
       if (choice === "0") {
         console.log("Exiting xint interactive mode.");
         break;
@@ -396,7 +463,7 @@ export async function cmdTui(): Promise<void> {
             );
             session.lastSearch = query;
             session.lastCommand = `xint search ${query}`;
-            const result = await runSubcommand(["search", query], session, activeIndexRef);
+            const result = await runSubcommand(["search", query], session, uiState);
             session.lastStatus = result.status;
             session.lastOutputLines = result.outputLines;
             break;
@@ -410,11 +477,7 @@ export async function cmdTui(): Promise<void> {
             );
             session.lastLocation = location;
             session.lastCommand = location ? `xint trends ${location}` : "xint trends";
-            const result = await runSubcommand(
-              location ? ["trends", location] : ["trends"],
-              session,
-              activeIndexRef,
-            );
+            const result = await runSubcommand(location ? ["trends", location] : ["trends"], session, uiState);
             session.lastStatus = result.status;
             session.lastOutputLines = result.outputLines;
             break;
@@ -431,7 +494,7 @@ export async function cmdTui(): Promise<void> {
             ).replace(/^@/, "");
             session.lastUsername = username;
             session.lastCommand = `xint profile ${username}`;
-            const result = await runSubcommand(["profile", username], session, activeIndexRef);
+            const result = await runSubcommand(["profile", username], session, uiState);
             session.lastStatus = result.status;
             session.lastOutputLines = result.outputLines;
             break;
@@ -448,7 +511,7 @@ export async function cmdTui(): Promise<void> {
             );
             session.lastTweetRef = tweetRef;
             session.lastCommand = `xint thread ${tweetRef}`;
-            const result = await runSubcommand(["thread", tweetRef], session, activeIndexRef);
+            const result = await runSubcommand(["thread", tweetRef], session, uiState);
             session.lastStatus = result.status;
             session.lastOutputLines = result.outputLines;
             break;
@@ -465,14 +528,14 @@ export async function cmdTui(): Promise<void> {
             );
             session.lastArticleUrl = url;
             session.lastCommand = `xint article ${url}`;
-            const result = await runSubcommand(["article", url], session, activeIndexRef);
+            const result = await runSubcommand(["article", url], session, uiState);
             session.lastStatus = result.status;
             session.lastOutputLines = result.outputLines;
             break;
           }
           case "6": {
             session.lastCommand = "xint --help";
-            const result = await runSubcommand(["--help"], session, activeIndexRef);
+            const result = await runSubcommand(["--help"], session, uiState);
             session.lastStatus = result.status;
             session.lastOutputLines = result.outputLines;
             break;
