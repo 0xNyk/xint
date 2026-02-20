@@ -40,6 +40,11 @@ type UiState = {
 };
 
 type UiPhase = "IDLE" | "INPUT" | "RUNNING" | "DONE" | "ERROR";
+type KeypressLike = { name?: string; ctrl?: boolean };
+type RunEvent =
+  | { type: "line"; line: string }
+  | { type: "tick"; spinner: string }
+  | { type: "exit"; code: number };
 type BorderChars = {
   tl: string;
   tr: string;
@@ -370,6 +375,104 @@ function renderDashboard(uiState: UiState, session: SessionState): void {
   }
 }
 
+function applyMenuKeyEvent(
+  str: string | undefined,
+  key: KeypressLike,
+  uiState: UiState,
+): { resolve?: string } {
+  if (key.ctrl && key.name === "c") return { resolve: "0" };
+
+  if (key.name === "up") {
+    uiState.activeIndex = (uiState.activeIndex - 1 + INTERACTIVE_ACTIONS.length) % INTERACTIVE_ACTIONS.length;
+    return {};
+  }
+  if (key.name === "down") {
+    uiState.activeIndex = (uiState.activeIndex + 1) % INTERACTIVE_ACTIONS.length;
+    return {};
+  }
+  if (key.name === "tab") {
+    uiState.tab = nextTab(uiState.tab);
+    return {};
+  }
+  if (key.name === "pageup" && uiState.tab === "output") {
+    uiState.outputOffset += 10;
+    return {};
+  }
+  if (key.name === "pagedown" && uiState.tab === "output") {
+    uiState.outputOffset = Math.max(0, uiState.outputOffset - 10);
+    return {};
+  }
+  if (key.name === "return") {
+    const selected = INTERACTIVE_ACTIONS[uiState.activeIndex];
+    uiState.tab = "output";
+    return { resolve: selected?.key ?? "0" };
+  }
+  if (key.name === "escape" || str === "q") return { resolve: "0" };
+  if (str === "?") {
+    uiState.tab = "help";
+    return {};
+  }
+  if (str === "1") {
+    uiState.tab = "commands";
+    return {};
+  }
+  if (str === "2") {
+    uiState.tab = "output";
+    return {};
+  }
+  if (str === "3") {
+    uiState.tab = "help";
+    return {};
+  }
+  if (str?.toLowerCase() === "f") {
+    uiState.tab = "output";
+    return { resolve: "__filter__" };
+  }
+  if (str === "/") {
+    uiState.tab = "output";
+    return { resolve: "__palette__" };
+  }
+
+  const normalized = normalizeInteractiveChoice(typeof str === "string" ? str : "");
+  if (normalized) {
+    uiState.tab = "output";
+    return { resolve: normalized };
+  }
+  return {};
+}
+
+function applyPromptKeyEvent(
+  str: string | undefined,
+  key: KeypressLike,
+  uiState: UiState,
+): { resolve?: string } {
+  if (key.ctrl && key.name === "c") return { resolve: "" };
+  if (key.name === "escape") return { resolve: "" };
+  if (key.name === "return") return { resolve: uiState.inlinePromptValue ?? "" };
+  if (key.name === "backspace") {
+    uiState.inlinePromptValue = (uiState.inlinePromptValue ?? "").slice(0, -1);
+    return {};
+  }
+  if (typeof str === "string" && str.length > 0 && !key.ctrl) {
+    uiState.inlinePromptValue = `${uiState.inlinePromptValue ?? ""}${str}`;
+  }
+  return {};
+}
+
+function applyRunEvent(event: RunEvent, session: SessionState): string | null {
+  if (event.type === "line") {
+    appendOutput(session, event.line);
+    return null;
+  }
+  if (event.type === "tick") {
+    session.lastStatus = `running ${event.spinner}`;
+    return null;
+  }
+  const status = event.code === 0 ? "success" : `failed (exit ${event.code})`;
+  session.lastStatus = status;
+  return status;
+}
+
 async function selectOption(
   rl: ReturnType<typeof createInterface>,
   session: SessionState,
@@ -393,89 +496,13 @@ async function selectOption(
     };
 
     const onKeypress = (str: string | undefined, key: { name?: string; ctrl?: boolean }) => {
-      if (key.ctrl && key.name === "c") {
+      const { resolve: resolved } = applyMenuKeyEvent(str, key, uiState);
+      if (resolved) {
         cleanup();
-        resolve("0");
+        resolve(resolved);
         return;
       }
-
-      if (key.name === "up") {
-        uiState.activeIndex =
-          (uiState.activeIndex - 1 + INTERACTIVE_ACTIONS.length) % INTERACTIVE_ACTIONS.length;
-        renderDashboard(uiState, session);
-        return;
-      }
-      if (key.name === "down") {
-        uiState.activeIndex = (uiState.activeIndex + 1) % INTERACTIVE_ACTIONS.length;
-        renderDashboard(uiState, session);
-        return;
-      }
-      if (key.name === "tab") {
-        uiState.tab = nextTab(uiState.tab);
-        renderDashboard(uiState, session);
-        return;
-      }
-      if (key.name === "pageup" && uiState.tab === "output") {
-        uiState.outputOffset += 10;
-        renderDashboard(uiState, session);
-        return;
-      }
-      if (key.name === "pagedown" && uiState.tab === "output") {
-        uiState.outputOffset = Math.max(0, uiState.outputOffset - 10);
-        renderDashboard(uiState, session);
-        return;
-      }
-      if (key.name === "return") {
-        const selected = INTERACTIVE_ACTIONS[uiState.activeIndex];
-        uiState.tab = "output";
-        cleanup();
-        resolve(selected?.key ?? "0");
-        return;
-      }
-      if (key.name === "escape" || str === "q") {
-        cleanup();
-        resolve("0");
-        return;
-      }
-      if (str === "?") {
-        uiState.tab = "help";
-        renderDashboard(uiState, session);
-        return;
-      }
-      if (str === "1") {
-        uiState.tab = "commands";
-        renderDashboard(uiState, session);
-        return;
-      }
-      if (str === "2") {
-        uiState.tab = "output";
-        renderDashboard(uiState, session);
-        return;
-      }
-      if (str === "3") {
-        uiState.tab = "help";
-        renderDashboard(uiState, session);
-        return;
-      }
-      if (str?.toLowerCase() === "f") {
-        uiState.tab = "output";
-        cleanup();
-        resolve("__filter__");
-        return;
-      }
-      if (str === "/") {
-        uiState.tab = "output";
-        cleanup();
-        resolve("__palette__");
-        return;
-      }
-
-      const normalized = normalizeInteractiveChoice(typeof str === "string" ? str : "");
-      if (normalized) {
-        uiState.tab = "output";
-        cleanup();
-        resolve(normalized);
-      }
+      renderDashboard(uiState, session);
     };
 
     input.resume();
@@ -496,7 +523,7 @@ function appendOutput(session: SessionState, line: string): void {
 async function consumeStream(
   stream: ReadableStream<Uint8Array> | null,
   prefix: string,
-  session: SessionState,
+  onLine: (line: string) => void,
 ): Promise<void> {
   if (!stream) return;
   const reader = stream.getReader();
@@ -511,12 +538,12 @@ async function consumeStream(
     const parts = buffer.split(/\r?\n/);
     buffer = parts.pop() ?? "";
     for (const part of parts) {
-      appendOutput(session, prefix ? `[${prefix}] ${part}` : part);
+      onLine(prefix ? `[${prefix}] ${part}` : part);
     }
   }
 
   if (buffer.trim().length > 0) {
-    appendOutput(session, prefix ? `[${prefix}] ${buffer}` : buffer);
+    onLine(prefix ? `[${prefix}] ${buffer}` : buffer);
   }
 }
 
@@ -537,25 +564,30 @@ async function runSubcommand(
 
   const spinnerFrames = ["|", "/", "-", "\\"];
   let spinnerIndex = 0;
-  const spinner = setInterval(() => {
-    session.lastStatus = `running ${spinnerFrames[spinnerIndex % spinnerFrames.length]}`;
-    spinnerIndex += 1;
+  let finalStatus: string | null = null;
+  const dispatch = (event: RunEvent) => {
+    const status = applyRunEvent(event, session);
+    if (status) finalStatus = status;
     if (input.isTTY && output.isTTY) {
       renderDashboard(uiState, session);
     }
+  };
+
+  const spinner = setInterval(() => {
+    dispatch({ type: "tick", spinner: spinnerFrames[spinnerIndex % spinnerFrames.length] });
+    spinnerIndex += 1;
   }, 90);
 
-  const stdoutTask = consumeStream(proc.stdout ?? null, "", session);
-  const stderrTask = consumeStream(proc.stderr ?? null, "stderr", session);
+  const stdoutTask = consumeStream(proc.stdout ?? null, "", (line) => dispatch({ type: "line", line }));
+  const stderrTask = consumeStream(proc.stderr ?? null, "stderr", (line) =>
+    dispatch({ type: "line", line }),
+  );
 
   const exitCode = await proc.exited;
   await Promise.all([stdoutTask, stderrTask]);
   clearInterval(spinner);
-  if (input.isTTY && output.isTTY) {
-    renderDashboard(uiState, session);
-  }
-
-  const status = exitCode === 0 ? "success" : `failed (exit ${exitCode})`;
+  dispatch({ type: "exit", code: exitCode });
+  const status = finalStatus ?? (exitCode === 0 ? "success" : `failed (exit ${exitCode})`);
   return { status, outputLines: session.lastOutputLines.slice(-1200) };
 }
 
@@ -596,31 +628,13 @@ async function questionInDashboard(
     };
 
     const onKeypress = (str: string | undefined, key: { name?: string; ctrl?: boolean }) => {
-      if (key.ctrl && key.name === "c") {
+      const { resolve: resolved } = applyPromptKeyEvent(str, key, uiState);
+      if (resolved !== undefined) {
         cleanup();
-        resolve("");
+        resolve(resolved);
         return;
       }
-      if (key.name === "escape") {
-        cleanup();
-        resolve("");
-        return;
-      }
-      if (key.name === "return") {
-        const value = uiState.inlinePromptValue ?? "";
-        cleanup();
-        resolve(value);
-        return;
-      }
-      if (key.name === "backspace") {
-        uiState.inlinePromptValue = (uiState.inlinePromptValue ?? "").slice(0, -1);
-        renderDashboard(uiState, session);
-        return;
-      }
-      if (typeof str === "string" && str.length > 0 && !key.ctrl) {
-        uiState.inlinePromptValue = `${uiState.inlinePromptValue ?? ""}${str}`;
-        renderDashboard(uiState, session);
-      }
+      renderDashboard(uiState, session);
     };
 
     input.resume();
@@ -640,6 +654,7 @@ export async function cmdTui(): Promise<void> {
   const session: SessionState = {
     lastOutputLines: [],
   };
+  const onResize = () => renderDashboard(uiState, session);
   const rl = createInterface({ input, output });
 
   try {
@@ -648,6 +663,7 @@ export async function cmdTui(): Promise<void> {
       input.setRawMode(true);
       input.resume();
       output.write("\x1b[?1049h\x1b[?25l");
+      output.on("resize", onResize);
     }
 
     for (;;) {
@@ -810,6 +826,7 @@ export async function cmdTui(): Promise<void> {
     }
   } finally {
     if (useRawTui) {
+      output.off("resize", onResize);
       input.setRawMode(false);
       output.write("\x1b[?25h\x1b[?1049l");
     }
