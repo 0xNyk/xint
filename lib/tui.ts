@@ -40,6 +40,19 @@ type UiState = {
 };
 
 type UiPhase = "IDLE" | "INPUT" | "RUNNING" | "DONE" | "ERROR";
+type BorderChars = {
+  tl: string;
+  tr: string;
+  bl: string;
+  br: string;
+  h: string;
+  v: string;
+  tj: string;
+  bj: string;
+  lj: string;
+  rj: string;
+  x: string;
+};
 
 const THEMES: Record<string, Theme> = {
   minimal: { accent: "\x1b[1m", border: "", muted: "", reset: "\x1b[0m" },
@@ -73,6 +86,26 @@ function clipText(value: string, width: number): string {
 
 function padText(value: string, width: number): string {
   return clipText(value, width).padEnd(width, " ");
+}
+
+function activeBorderChars(): BorderChars {
+  if (process.env.XINT_TUI_ASCII === "1") {
+    return { tl: "+", tr: "+", bl: "+", br: "+", h: "-", v: "|", tj: "+", bj: "+", lj: "+", rj: "+", x: "+" };
+  }
+  return { tl: "╭", tr: "╮", bl: "╰", br: "╯", h: "─", v: "│", tj: "┬", bj: "┴", lj: "├", rj: "┤", x: "┼" };
+}
+
+function iconForAction(key: string): string {
+  if (process.env.XINT_TUI_ICONS === "0") return "";
+  const icons: Record<string, string> = {
+    "1": "⌕",
+    "2": "◍",
+    "3": "◉",
+    "4": "↳",
+    "5": "✦",
+    "6": "?",
+  };
+  return icons[key] ? `${icons[key]} ` : "";
 }
 
 function buildTabs(uiState: UiState): string {
@@ -136,7 +169,7 @@ function buildMenuLines(activeIndex: number): string[] {
   INTERACTIVE_ACTIONS.forEach((option, index) => {
     const pointer = index === activeIndex ? ">" : " ";
     const aliases = option.aliases.length > 0 ? ` (${option.aliases.join(", ")})` : "";
-    lines.push(`${pointer} ${option.key}) ${option.label}${aliases}`);
+    lines.push(`${pointer} ${option.key}) ${iconForAction(option.key)}${option.label}${aliases}`);
     lines.push(`    ${option.hint}`);
   });
   return lines;
@@ -247,6 +280,7 @@ function buildStatusLine(session: SessionState, uiState: UiState, width: number)
 
 function renderDoublePane(uiState: UiState, session: SessionState, columns: number, rows: number): void {
   const theme = activeTheme();
+  const border = activeBorderChars();
   const leftBoxWidth = Math.max(46, Math.floor(columns * 0.45));
   const rightBoxWidth = Math.max(30, columns - leftBoxWidth - 1);
   const leftInner = Math.max(20, leftBoxWidth - 2);
@@ -259,10 +293,10 @@ function renderDoublePane(uiState: UiState, session: SessionState, columns: numb
   const tracker = buildHeaderTracker(uiState, 16);
 
   let frame = "\x1b[2J\x1b[H";
-  frame += `${theme.border}+${"-".repeat(Math.max(1, columns - 2))}+${theme.reset}\n`;
-  frame += `${theme.border}|${theme.reset}${padText(` xint dashboard ${tabs}`, Math.max(1, columns - 2))}${theme.border}|${theme.reset}\n`;
-  frame += `${theme.border}|${theme.reset}${theme.muted}${padText(` ${tracker}`, Math.max(1, columns - 2))}${theme.reset}${theme.border}|${theme.reset}\n`;
-  frame += `${theme.border}+${"-".repeat(leftBoxWidth - 2)}+ +${"-".repeat(rightBoxWidth - 2)}+${theme.reset}\n`;
+  frame += `${theme.border}${border.tl}${border.h.repeat(Math.max(1, columns - 2))}${border.tr}${theme.reset}\n`;
+  frame += `${theme.border}${border.v}${theme.reset}${padText(` xint dashboard ${tabs}`, Math.max(1, columns - 2))}${theme.border}${border.v}${theme.reset}\n`;
+  frame += `${theme.border}${border.v}${theme.reset}${theme.accent}${padText(` ${tracker}`, Math.max(1, columns - 2))}${theme.reset}${theme.border}${border.v}${theme.reset}\n`;
+  frame += `${theme.border}${border.lj}${border.h.repeat(leftBoxWidth - 2)}${border.rj} ${border.lj}${border.h.repeat(rightBoxWidth - 2)}${border.rj}${theme.reset}\n`;
 
   for (let row = 0; row < totalRows; row += 1) {
     const leftRaw = leftLines[row] ?? "";
@@ -273,19 +307,20 @@ function renderDoublePane(uiState: UiState, session: SessionState, columns: numb
       ? `${theme.accent}${leftText}${theme.reset}`
       : `${theme.muted}${leftText}${theme.reset}`;
 
-    frame += `${theme.border}|${theme.reset}${leftSegment}${theme.border}|${theme.reset} ${theme.border}|${theme.reset}${theme.muted}${rightText}${theme.reset}${theme.border}|${theme.reset}\n`;
+    frame += `${theme.border}${border.v}${theme.reset}${leftSegment}${theme.border}${border.v}${theme.reset} ${theme.border}${border.v}${theme.reset}${theme.muted}${rightText}${theme.reset}${theme.border}${border.v}${theme.reset}\n`;
   }
 
-  frame += `${theme.border}+${"-".repeat(leftBoxWidth - 2)}+ +${"-".repeat(rightBoxWidth - 2)}+${theme.reset}\n`;
-  frame += `${theme.border}|${theme.reset}${theme.accent}${buildStatusLine(session, uiState, Math.max(1, columns - 2))}${theme.reset}${theme.border}|${theme.reset}\n`;
+  frame += `${theme.border}${border.lj}${border.h.repeat(leftBoxWidth - 2)}${border.rj} ${border.lj}${border.h.repeat(rightBoxWidth - 2)}${border.rj}${theme.reset}\n`;
+  frame += `${theme.border}${border.v}${theme.reset}${theme.accent}${buildStatusLine(session, uiState, Math.max(1, columns - 2))}${theme.reset}${theme.border}${border.v}${theme.reset}\n`;
   const footer = " ↑↓ Move • Enter Run • Tab Views • f Filter • / Palette • PgUp/PgDn Scroll • q Quit ";
-  frame += `${theme.border}|${theme.reset}${padText(footer, Math.max(1, columns - 2))}${theme.border}|${theme.reset}\n`;
-  frame += `${theme.border}+${"-".repeat(Math.max(1, columns - 2))}+${theme.reset}\n`;
+  frame += `${theme.border}${border.v}${theme.reset}${padText(footer, Math.max(1, columns - 2))}${theme.border}${border.v}${theme.reset}\n`;
+  frame += `${theme.border}${border.bl}${border.h.repeat(Math.max(1, columns - 2))}${border.br}${theme.reset}\n`;
   output.write(frame);
 }
 
 function renderSinglePane(uiState: UiState, session: SessionState, columns: number, rows: number): void {
   const theme = activeTheme();
+  const border = activeBorderChars();
   const width = Math.max(30, columns - 2);
   const totalRows = Math.max(10, rows - 8);
   const tabs = buildTabs(uiState);
@@ -297,31 +332,31 @@ function renderSinglePane(uiState: UiState, session: SessionState, columns: numb
       : buildTabLines(session, uiState, totalRows * 2);
 
   let frame = "\x1b[2J\x1b[H";
-  frame += `${theme.border}+${"-".repeat(width)}+${theme.reset}\n`;
-  frame += `${theme.border}|${theme.reset}${padText(` xint dashboard ${tabs}`, width)}${theme.border}|${theme.reset}\n`;
-  frame += `${theme.border}|${theme.reset}${theme.muted}${padText(` ${tracker}`, width)}${theme.reset}${theme.border}|${theme.reset}\n`;
-  frame += `${theme.border}+${"-".repeat(width)}+${theme.reset}\n`;
+  frame += `${theme.border}${border.tl}${border.h.repeat(width)}${border.tr}${theme.reset}\n`;
+  frame += `${theme.border}${border.v}${theme.reset}${padText(` xint dashboard ${tabs}`, width)}${theme.border}${border.v}${theme.reset}\n`;
+  frame += `${theme.border}${border.v}${theme.reset}${theme.accent}${padText(` ${tracker}`, width)}${theme.reset}${theme.border}${border.v}${theme.reset}\n`;
+  frame += `${theme.border}${border.lj}${border.h.repeat(width)}${border.rj}${theme.reset}\n`;
 
   for (const line of lines.slice(-totalRows)) {
     const row = padText(line, width);
     if (line.startsWith("> ")) {
-      frame += `${theme.border}|${theme.reset}${theme.accent}${row}${theme.reset}${theme.border}|${theme.reset}\n`;
+      frame += `${theme.border}${border.v}${theme.reset}${theme.accent}${row}${theme.reset}${theme.border}${border.v}${theme.reset}\n`;
     } else {
-      frame += `${theme.border}|${theme.reset}${theme.muted}${row}${theme.reset}${theme.border}|${theme.reset}\n`;
+      frame += `${theme.border}${border.v}${theme.reset}${theme.muted}${row}${theme.reset}${theme.border}${border.v}${theme.reset}\n`;
     }
   }
 
   const rendered = Math.min(totalRows, lines.length);
   for (let i = rendered; i < totalRows; i += 1) {
-    frame += `${theme.border}|${theme.reset}${" ".repeat(width)}${theme.border}|${theme.reset}\n`;
+    frame += `${theme.border}${border.v}${theme.reset}${" ".repeat(width)}${theme.border}${border.v}${theme.reset}\n`;
   }
 
   const footer = " Enter Run • Tab Views • f Filter • / Palette • PgUp/PgDn • q Quit ";
-  frame += `${theme.border}+${"-".repeat(width)}+${theme.reset}\n`;
-  frame += `${theme.border}|${theme.reset}${theme.accent}${buildStatusLine(session, uiState, width)}${theme.reset}${theme.border}|${theme.reset}\n`;
-  frame += `${theme.border}+${"-".repeat(width)}+${theme.reset}\n`;
-  frame += `${theme.border}|${theme.reset}${padText(footer, width)}${theme.border}|${theme.reset}\n`;
-  frame += `${theme.border}+${"-".repeat(width)}+${theme.reset}\n`;
+  frame += `${theme.border}${border.lj}${border.h.repeat(width)}${border.rj}${theme.reset}\n`;
+  frame += `${theme.border}${border.v}${theme.reset}${theme.accent}${buildStatusLine(session, uiState, width)}${theme.reset}${theme.border}${border.v}${theme.reset}\n`;
+  frame += `${theme.border}${border.lj}${border.h.repeat(width)}${border.rj}${theme.reset}\n`;
+  frame += `${theme.border}${border.v}${theme.reset}${padText(footer, width)}${theme.border}${border.v}${theme.reset}\n`;
+  frame += `${theme.border}${border.bl}${border.h.repeat(width)}${border.br}${theme.reset}\n`;
   output.write(frame);
 }
 
