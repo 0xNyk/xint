@@ -1,4 +1,5 @@
 import { join } from "path";
+import { readFileSync } from "fs";
 import { createInterface } from "readline/promises";
 import { emitKeypressEvents } from "readline";
 import { stdin as input, stdout as output } from "process";
@@ -25,6 +26,7 @@ type Theme = {
   accent: string;
   border: string;
   muted: string;
+  hero: string;
   reset: string;
 };
 
@@ -60,9 +62,11 @@ type BorderChars = {
 };
 
 const THEMES: Record<string, Theme> = {
-  minimal: { accent: "\x1b[1m", border: "", muted: "", reset: "\x1b[0m" },
-  classic: { accent: "\x1b[1;36m", border: "\x1b[2m", muted: "\x1b[2m", reset: "\x1b[0m" },
-  neon: { accent: "\x1b[1;95m", border: "\x1b[38;5;45m", muted: "\x1b[38;5;244m", reset: "\x1b[0m" },
+  minimal: { accent: "\x1b[1m", border: "", muted: "", hero: "\x1b[1m", reset: "\x1b[0m" },
+  classic: { accent: "\x1b[1;36m", border: "\x1b[2m", muted: "\x1b[2m", hero: "\x1b[1;34m", reset: "\x1b[0m" },
+  neon: { accent: "\x1b[1;95m", border: "\x1b[38;5;45m", muted: "\x1b[38;5;244m", hero: "\x1b[1;92m", reset: "\x1b[0m" },
+  ocean: { accent: "\x1b[1;96m", border: "\x1b[38;5;39m", muted: "\x1b[38;5;244m", hero: "\x1b[1;94m", reset: "\x1b[0m" },
+  amber: { accent: "\x1b[1;33m", border: "\x1b[38;5;214m", muted: "\x1b[38;5;244m", hero: "\x1b[1;220m", reset: "\x1b[0m" },
 };
 
 const HELP_LINES = [
@@ -79,7 +83,37 @@ const HELP_LINES = [
 
 function activeTheme(): Theme {
   const requested = (process.env.XINT_TUI_THEME || "classic").toLowerCase();
-  return THEMES[requested] ?? THEMES.classic;
+  const base = THEMES[requested] ?? THEMES.classic;
+  const fromFile = loadThemeFromFile();
+  return { ...base, ...fromFile };
+}
+
+function loadThemeFromFile(): Partial<Theme> {
+  const path = process.env.XINT_TUI_THEME_FILE;
+  if (!path) return {};
+  try {
+    const raw = readFileSync(path, "utf8");
+    const parsed = JSON.parse(raw) as Partial<Record<keyof Theme, unknown>>;
+    const out: Partial<Theme> = {};
+    for (const key of ["accent", "border", "muted", "hero", "reset"] as Array<keyof Theme>) {
+      if (typeof parsed[key] === "string") out[key] = parsed[key] as string;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function isHeroEnabled(): boolean {
+  return process.env.XINT_TUI_HERO !== "0";
+}
+
+function buildHeroLine(uiState: UiState, session: SessionState, width: number): string {
+  const phase = resolveUiPhase(session, uiState);
+  const palette = phase === "RUNNING" ? ["▁", "▂", "▃", "▄", "▅", "▆", "▇"] : ["·", "•", "·", "•", "·"];
+  const tick = Math.floor(Date.now() / 110);
+  const wave = Array.from({ length: 12 }, (_, i) => palette[(tick + i) % palette.length]).join("");
+  return padText(` xint intelligence console  ${wave}`, width);
 }
 
 function clipText(value: string, width: number): string {
@@ -290,7 +324,7 @@ function renderDoublePane(uiState: UiState, session: SessionState, columns: numb
   const rightBoxWidth = Math.max(30, columns - leftBoxWidth - 1);
   const leftInner = Math.max(20, leftBoxWidth - 2);
   const rightInner = Math.max(20, rightBoxWidth - 2);
-  const totalRows = Math.max(12, rows - 9);
+  const totalRows = Math.max(12, rows - (isHeroEnabled() ? 10 : 9));
 
   const leftLines = buildMenuLines(uiState.activeIndex);
   const rightLines = buildTabLines(session, uiState, totalRows).slice(-totalRows);
@@ -299,6 +333,9 @@ function renderDoublePane(uiState: UiState, session: SessionState, columns: numb
 
   let frame = "\x1b[2J\x1b[H";
   frame += `${theme.border}${border.tl}${border.h.repeat(Math.max(1, columns - 2))}${border.tr}${theme.reset}\n`;
+  if (isHeroEnabled()) {
+    frame += `${theme.border}${border.v}${theme.reset}${theme.hero}${buildHeroLine(uiState, session, Math.max(1, columns - 2))}${theme.reset}${theme.border}${border.v}${theme.reset}\n`;
+  }
   frame += `${theme.border}${border.v}${theme.reset}${padText(` xint dashboard ${tabs}`, Math.max(1, columns - 2))}${theme.border}${border.v}${theme.reset}\n`;
   frame += `${theme.border}${border.v}${theme.reset}${theme.accent}${padText(` ${tracker}`, Math.max(1, columns - 2))}${theme.reset}${theme.border}${border.v}${theme.reset}\n`;
   frame += `${theme.border}${border.lj}${border.h.repeat(leftBoxWidth - 2)}${border.rj} ${border.lj}${border.h.repeat(rightBoxWidth - 2)}${border.rj}${theme.reset}\n`;
@@ -327,7 +364,7 @@ function renderSinglePane(uiState: UiState, session: SessionState, columns: numb
   const theme = activeTheme();
   const border = activeBorderChars();
   const width = Math.max(30, columns - 2);
-  const totalRows = Math.max(10, rows - 8);
+  const totalRows = Math.max(10, rows - (isHeroEnabled() ? 9 : 8));
   const tabs = buildTabs(uiState);
   const tracker = buildHeaderTracker(uiState, 16);
 
@@ -338,6 +375,9 @@ function renderSinglePane(uiState: UiState, session: SessionState, columns: numb
 
   let frame = "\x1b[2J\x1b[H";
   frame += `${theme.border}${border.tl}${border.h.repeat(width)}${border.tr}${theme.reset}\n`;
+  if (isHeroEnabled()) {
+    frame += `${theme.border}${border.v}${theme.reset}${theme.hero}${buildHeroLine(uiState, session, width)}${theme.reset}${theme.border}${border.v}${theme.reset}\n`;
+  }
   frame += `${theme.border}${border.v}${theme.reset}${padText(` xint dashboard ${tabs}`, width)}${theme.border}${border.v}${theme.reset}\n`;
   frame += `${theme.border}${border.v}${theme.reset}${theme.accent}${padText(` ${tracker}`, width)}${theme.reset}${theme.border}${border.v}${theme.reset}\n`;
   frame += `${theme.border}${border.lj}${border.h.repeat(width)}${border.rj}${theme.reset}\n`;
