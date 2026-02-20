@@ -1,13 +1,14 @@
-name: Capability Contract
+name: MCP Nightly Regression
 
 on:
-  pull_request:
-  push:
-    branches: [main]
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
 
 jobs:
-  parity:
+  regression:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - name: Checkout xint
         uses: actions/checkout@v4
@@ -18,6 +19,11 @@ jobs:
           repository: 0xNyk/xint-rs
           path: xint-rs
 
+      - name: Checkout xint-cloud
+        uses: actions/checkout@v4
+        with:
+          repository: 0xNyk/xint-cloud
+          path: xint-cloud
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -28,6 +34,9 @@ jobs:
       - name: Install xint deps
         run: bun install --frozen-lockfile
 
+      - name: Install xint-cloud deps
+        run: bun install --frozen-lockfile
+        working-directory: xint-cloud
 
       - name: Generate manifests
         run: |
@@ -37,6 +46,14 @@ jobs:
       - name: Check contract parity
         run: bun scripts/check-capability-contract.mjs /tmp/xint-ts-capabilities.json /tmp/xint-rs-capabilities.json
 
+      - name: Check release version parity
+        run: >
+          bun scripts/check-release-version-parity.mjs
+          package.json
+          xint-rs/Cargo.toml
+          /tmp/xint-ts-capabilities.json
+          /tmp/xint-rs-capabilities.json
+
       - name: Run MCP envelope contract tests (TypeScript)
         run: bun test lib/mcp-envelope-contract.test.ts
 
@@ -44,3 +61,7 @@ jobs:
         run: |
           cargo test --manifest-path xint-rs/Cargo.toml mcp::costs_tool_returns_success_payload_without_network
           cargo test --manifest-path xint-rs/Cargo.toml mcp::cache_clear_tool_returns_success_payload
+
+      - name: Run package API smoke tests (xint-cloud create/query/publish)
+        run: bun test src/server.test.ts --filter "package status/search/query/publish/refresh endpoints operate on persisted package state"
+        working-directory: xint-cloud

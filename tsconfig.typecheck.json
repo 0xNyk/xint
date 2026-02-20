@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "xint.ts",
+    "lib/**/*.ts"
+  ],
+  "exclude": [
+    "**/*.test.ts",
+    "node_modules"
+  ]
+}

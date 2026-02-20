@@ -5,12 +5,11 @@
  * Exposes xint functionality as MCP tools for AI agents like Claude Code.
  */
 
-import * as api from "./api";
-import * as cache from "./cache";
-import { checkBudget, trackCost } from "./costs";
+import { checkBudget } from "./costs";
 import { recordCommandResult } from "./reliability";
 import { readFileSync } from "fs";
 import { join } from "path";
+import { createMcpToolHandlers, type MCPToolHandler, type ToolExecutionResult } from "./mcp_dispatcher";
 
 type PolicyMode = "read_only" | "engagement" | "moderation";
 
@@ -22,11 +21,6 @@ interface MCPServerOptions {
 interface MCPSSEServerOptions extends MCPServerOptions {
   host: string;
   authToken?: string;
-}
-
-interface ToolExecutionResult {
-  data: unknown;
-  fallbackUsed: boolean;
 }
 
 interface PackageQueryClaim {
@@ -333,6 +327,20 @@ const TOOLS = [
       properties: {},
     },
   },
+  {
+    name: "xint_costs",
+    description: "Get API cost tracking information",
+    inputSchema: {
+      type: "object",
+      properties: {
+        period: {
+          type: "string",
+          enum: ["today", "week", "month", "all"],
+          description: "Time period (default: today)",
+        },
+      },
+    },
+  },
 ];
 
 const TOOL_POLICY: Record<string, PolicyMode> = {
@@ -354,6 +362,7 @@ const TOOL_POLICY: Record<string, PolicyMode> = {
   xint_package_search: "read_only",
   xint_package_publish: "engagement",
   xint_cache_clear: "read_only",
+  xint_costs: "read_only",
 };
 
 const TOOL_BUDGET_GUARDED = new Set<string>([
@@ -392,9 +401,16 @@ export class MCPServer {
   private initialized = false;
   private idCounter = 1;
   private readonly options: MCPServerOptions;
+  private readonly toolHandlers: Record<string, MCPToolHandler>;
 
   constructor(options: MCPServerOptions) {
     this.options = options;
+    this.toolHandlers = createMcpToolHandlers({
+      extractTweetId: (input) => this.extractTweetId(input),
+      callPackageApi: (method, path, body) => this.callPackageApi(method, path, body),
+      ensurePackageQueryCitations: (data, requireCitations) =>
+        ensurePackageQueryCitations(data, requireCitations),
+    });
   }
 
   async handleMessage(msg: string): Promise<string | null> {
@@ -453,7 +469,15 @@ export class MCPServer {
             result: {
               content: [{
                 type: "text",
-                text: typeof result.data === "string" ? result.data : JSON.stringify(result.data, null, 2)
+                text: JSON.stringify(
+                  {
+                    type: result.type,
+                    message: result.message,
+                    data: result.data,
+                  },
+                  null,
+                  2,
+                )
               }]
             }
           });
@@ -521,177 +545,11 @@ export class MCPServer {
   private async executeTool(name: string, args: Record<string, unknown>): Promise<ToolExecutionResult> {
     this.ensurePolicyAllowed(name);
     this.ensureBudgetAllowed(name);
-
-    switch (name) {
-      case "xint_search": {
-        const query = String(args.query || "");
-        const tweets = await api.search(query, {
-          pages: Math.ceil((Number(args.limit) || 15) / 20),
-          sortOrder: (args.sort === "recent" ? "recency" : "relevancy") as any,
-          since: typeof args.since === "string" ? args.since : undefined,
-        });
-        let results = tweets;
-        if (args.noRetweets) {
-          results = results.filter((t: any) => !t.text.startsWith("RT @"));
-        }
-        if (args.noReplies) {
-          results = results.filter((t: any) => t.conversation_id === t.id);
-        }
-        trackCost("search", "/2/tweets/search/recent", tweets.length);
-        return { data: results.slice(0, Number(args.limit) || 15), fallbackUsed: false };
-      }
-
-      case "xint_profile": {
-        const username = String(args.username || "");
-        const count = Number(args.count) || 20;
-        const includeReplies = Boolean(args.includeReplies);
-        const { user, tweets } = await api.profile(username, {
-          count,
-          includeReplies,
-        });
-        trackCost("profile", `/2/users/by/username/${username}`, tweets.length + 1);
-        return { data: { user, tweets: tweets.slice(0, count) }, fallbackUsed: false };
-      }
-
-      case "xint_thread": {
-        const tweetId = this.extractTweetId(String(args.tweetId || ""));
-        const pages = Number(args.pages) || 2;
-        const tweets = await api.thread(tweetId, { pages });
-        trackCost("thread", "/2/tweets/search/recent", tweets.length);
-        return { data: { tweets }, fallbackUsed: false };
-      }
-
-      case "xint_tweet": {
-        const tweetId = this.extractTweetId(String(args.tweetId || ""));
-        const tweet = await api.getTweet(tweetId);
-        trackCost("tweet", `/2/tweets/${tweetId}`, tweet ? 1 : 0);
-        return { data: tweet, fallbackUsed: false };
-      }
-
-      case "xint_article": {
-        const { fetchArticle } = await import("./article");
-        const article = await fetchArticle(String(args.url || ""), { full: args.full !== false });
-        return { data: article, fallbackUsed: false };
-      }
-
-      case "xint_xsearch": {
-        return { data: { note: "xSearch requires XAI_API_KEY" }, fallbackUsed: false };
-      }
-
-      case "xint_collections_list": {
-        return { data: { note: "Collections requires XAI_API_KEY" }, fallbackUsed: false };
-      }
-
-      case "xint_collections_search": {
-        return { data: { note: "Collections requires XAI_API_KEY" }, fallbackUsed: false };
-      }
-
-      case "xint_analyze": {
-        return { data: { note: "Analyze requires XAI_API_KEY" }, fallbackUsed: false };
-      }
-
-      case "xint_trends": {
-        const { fetchTrends } = await import("./trends");
-        const location = typeof args.location === "string" ? args.location : "worldwide";
-        const limit = Number(args.limit) || 20;
-        const trends = await fetchTrends(location, limit);
-        return { data: trends, fallbackUsed: trends.source === "search_fallback" };
-      }
-
-      case "xint_bookmarks": {
-        return { data: { note: "Bookmarks requires OAuth - use xint bookmarks command" }, fallbackUsed: false };
-      }
-
-      case "xint_package_create": {
-        const payload = {
-          name: String(args.name || ""),
-          topic_query: String(args.topicQuery || args.topic_query || ""),
-          sources: Array.isArray(args.sources) ? args.sources : [],
-          time_window: (args.timeWindow || args.time_window || {
-            from: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
-            to: new Date().toISOString(),
-          }) as unknown,
-          policy: String(args.policy || "private"),
-          analysis_profile: String(args.analysisProfile || args.analysis_profile || "summary"),
-        };
-        const data = await this.callPackageApi("POST", "/packages", payload);
-        return { data, fallbackUsed: false };
-      }
-
-      case "xint_package_status": {
-        const packageId = String(args.packageId || args.package_id || "");
-        if (!packageId) throw new Error("Missing packageId/package_id");
-        const data = await this.callPackageApi("GET", `/packages/${encodeURIComponent(packageId)}`);
-        return { data, fallbackUsed: false };
-      }
-
-      case "xint_package_query": {
-        const requireCitations = args.requireCitations !== undefined
-          ? Boolean(args.requireCitations)
-          : (args.require_citations !== undefined ? Boolean(args.require_citations) : true);
-        const payload = {
-          query: String(args.query || ""),
-          package_ids: Array.isArray(args.packageIds)
-            ? args.packageIds
-            : (Array.isArray(args.package_ids) ? args.package_ids : []),
-          max_claims: Number(args.maxClaims || args.max_claims || 10),
-          require_citations: requireCitations,
-        };
-        if (!payload.query || payload.package_ids.length === 0) {
-          throw new Error("Missing query or packageIds/package_ids");
-        }
-        const data = await this.callPackageApi("POST", "/query", payload);
-        ensurePackageQueryCitations(data, requireCitations);
-        return { data, fallbackUsed: false };
-      }
-
-      case "xint_package_refresh": {
-        const packageId = String(args.packageId || args.package_id || "");
-        if (!packageId) throw new Error("Missing packageId/package_id");
-        const payload = {
-          reason: String(args.reason || "manual"),
-        };
-        const data = await this.callPackageApi(
-          "POST",
-          `/packages/${encodeURIComponent(packageId)}/refresh`,
-          payload
-        );
-        return { data, fallbackUsed: false };
-      }
-
-      case "xint_package_search": {
-        const query = String(args.query || "");
-        if (!query) throw new Error("Missing query");
-        const limit = Number(args.limit || 20);
-        const data = await this.callPackageApi(
-          "GET",
-          `/packages/search?q=${encodeURIComponent(query)}&limit=${encodeURIComponent(String(limit))}`
-        );
-        return { data, fallbackUsed: false };
-      }
-
-      case "xint_package_publish": {
-        const packageId = String(args.packageId || args.package_id || "");
-        const snapshotVersion = Number(args.snapshotVersion || args.snapshot_version || 0);
-        if (!packageId || !snapshotVersion) {
-          throw new Error("Missing packageId/package_id or snapshotVersion/snapshot_version");
-        }
-        const data = await this.callPackageApi(
-          "POST",
-          `/packages/${encodeURIComponent(packageId)}/publish`,
-          { snapshot_version: snapshotVersion }
-        );
-        return { data, fallbackUsed: false };
-      }
-
-      case "xint_cache_clear": {
-        const removed = cache.clear();
-        return { data: { cleared: removed }, fallbackUsed: false };
-      }
-
-      default:
-        throw new Error(`Unknown tool: ${name}`);
+    const handler = this.toolHandlers[name];
+    if (!handler) {
+      throw new Error(`Unknown tool: ${name}`);
     }
+    return handler(args);
   }
 
   private async callPackageApi(method: string, path: string, body?: unknown): Promise<unknown> {
