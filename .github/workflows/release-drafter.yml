@@ -1,20 +1,11 @@
 name: Release Drafter
 
 on:
-  push:
-    # branches to target
-    branches:
-      - main
-  # pull_request events, but only when the PR is merged
-  pull_request:
-    types:
-      - closed
+  workflow_dispatch:
 
 jobs:
   update_release_draft:
     runs-on: ubuntu-latest
-    # Only run when merged or when pushed to main
-    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.merged_at != null)
     steps:
       # Drafts your Next Release Notes as Pull Requests are merged into "main"
       - uses: release-drafter/release-drafter@v6
