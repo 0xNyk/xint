@@ -232,12 +232,10 @@ function renderDoublePane(uiState: UiState, session: SessionState, columns: numb
     })
     .join(" ");
 
-  output.write("\x1b[2J\x1b[H");
-  output.write(`${theme.border}+${"-".repeat(Math.max(1, columns - 2))}+${theme.reset}\n`);
-  output.write(
-    `${theme.border}|${theme.reset}${padText(` xint dashboard ${tabs}`, Math.max(1, columns - 2))}${theme.border}|${theme.reset}\n`,
-  );
-  output.write(`${theme.border}+${"-".repeat(leftBoxWidth - 2)}+ +${"-".repeat(rightBoxWidth - 2)}+${theme.reset}\n`);
+  let frame = "\x1b[2J\x1b[H";
+  frame += `${theme.border}+${"-".repeat(Math.max(1, columns - 2))}+${theme.reset}\n`;
+  frame += `${theme.border}|${theme.reset}${padText(` xint dashboard ${tabs}`, Math.max(1, columns - 2))}${theme.border}|${theme.reset}\n`;
+  frame += `${theme.border}+${"-".repeat(leftBoxWidth - 2)}+ +${"-".repeat(rightBoxWidth - 2)}+${theme.reset}\n`;
 
   for (let row = 0; row < totalRows; row += 1) {
     const leftRaw = leftLines[row] ?? "";
@@ -248,18 +246,15 @@ function renderDoublePane(uiState: UiState, session: SessionState, columns: numb
       ? `${theme.accent}${leftText}${theme.reset}`
       : `${theme.muted}${leftText}${theme.reset}`;
 
-    output.write(
-      `${theme.border}|${theme.reset}${leftSegment}${theme.border}|${theme.reset} ${theme.border}|${theme.reset}${theme.muted}${rightText}${theme.reset}${theme.border}|${theme.reset}\n`,
-    );
+    frame += `${theme.border}|${theme.reset}${leftSegment}${theme.border}|${theme.reset} ${theme.border}|${theme.reset}${theme.muted}${rightText}${theme.reset}${theme.border}|${theme.reset}\n`;
   }
 
-  output.write(`${theme.border}+${"-".repeat(leftBoxWidth - 2)}+ +${"-".repeat(rightBoxWidth - 2)}+${theme.reset}\n`);
-  output.write(
-    `${theme.border}|${theme.reset}${theme.accent}${buildStatusLine(session, uiState, Math.max(1, columns - 2))}${theme.reset}${theme.border}|${theme.reset}\n`,
-  );
+  frame += `${theme.border}+${"-".repeat(leftBoxWidth - 2)}+ +${"-".repeat(rightBoxWidth - 2)}+${theme.reset}\n`;
+  frame += `${theme.border}|${theme.reset}${theme.accent}${buildStatusLine(session, uiState, Math.max(1, columns - 2))}${theme.reset}${theme.border}|${theme.reset}\n`;
   const footer = " Up/Down Navigate | Enter Run | Tab Tabs | F Search Output | PgUp/PgDn Scroll | / Palette | q Quit ";
-  output.write(`${theme.border}|${theme.reset}${padText(footer, Math.max(1, columns - 2))}${theme.border}|${theme.reset}\n`);
-  output.write(`${theme.border}+${"-".repeat(Math.max(1, columns - 2))}+${theme.reset}\n`);
+  frame += `${theme.border}|${theme.reset}${padText(footer, Math.max(1, columns - 2))}${theme.border}|${theme.reset}\n`;
+  frame += `${theme.border}+${"-".repeat(Math.max(1, columns - 2))}+${theme.reset}\n`;
+  output.write(frame);
 }
 
 function renderSinglePane(uiState: UiState, session: SessionState, columns: number, rows: number): void {
@@ -278,33 +273,32 @@ function renderSinglePane(uiState: UiState, session: SessionState, columns: numb
       ? [...buildMenuLines(uiState.activeIndex), "", ...buildCommandDrawer(uiState.activeIndex)]
       : buildTabLines(session, uiState, totalRows * 2);
 
-  output.write("\x1b[2J\x1b[H");
-  output.write(`${theme.border}+${"-".repeat(width)}+${theme.reset}\n`);
-  output.write(`${theme.border}|${theme.reset}${padText(` xint dashboard ${tabs}`, width)}${theme.border}|${theme.reset}\n`);
-  output.write(`${theme.border}+${"-".repeat(width)}+${theme.reset}\n`);
+  let frame = "\x1b[2J\x1b[H";
+  frame += `${theme.border}+${"-".repeat(width)}+${theme.reset}\n`;
+  frame += `${theme.border}|${theme.reset}${padText(` xint dashboard ${tabs}`, width)}${theme.border}|${theme.reset}\n`;
+  frame += `${theme.border}+${"-".repeat(width)}+${theme.reset}\n`;
 
   for (const line of lines.slice(-totalRows)) {
     const row = padText(line, width);
     if (line.startsWith("> ")) {
-      output.write(`${theme.border}|${theme.reset}${theme.accent}${row}${theme.reset}${theme.border}|${theme.reset}\n`);
+      frame += `${theme.border}|${theme.reset}${theme.accent}${row}${theme.reset}${theme.border}|${theme.reset}\n`;
     } else {
-      output.write(`${theme.border}|${theme.reset}${theme.muted}${row}${theme.reset}${theme.border}|${theme.reset}\n`);
+      frame += `${theme.border}|${theme.reset}${theme.muted}${row}${theme.reset}${theme.border}|${theme.reset}\n`;
     }
   }
 
   const rendered = Math.min(totalRows, lines.length);
   for (let i = rendered; i < totalRows; i += 1) {
-    output.write(`${theme.border}|${theme.reset}${" ".repeat(width)}${theme.border}|${theme.reset}\n`);
+    frame += `${theme.border}|${theme.reset}${" ".repeat(width)}${theme.border}|${theme.reset}\n`;
   }
 
   const footer = " Tab Tabs | F Search Output | PgUp/PgDn Scroll | / Palette | q Quit ";
-  output.write(`${theme.border}+${"-".repeat(width)}+${theme.reset}\n`);
-  output.write(
-    `${theme.border}|${theme.reset}${theme.accent}${buildStatusLine(session, uiState, width)}${theme.reset}${theme.border}|${theme.reset}\n`,
-  );
-  output.write(`${theme.border}+${"-".repeat(width)}+${theme.reset}\n`);
-  output.write(`${theme.border}|${theme.reset}${padText(footer, width)}${theme.border}|${theme.reset}\n`);
-  output.write(`${theme.border}+${"-".repeat(width)}+${theme.reset}\n`);
+  frame += `${theme.border}+${"-".repeat(width)}+${theme.reset}\n`;
+  frame += `${theme.border}|${theme.reset}${theme.accent}${buildStatusLine(session, uiState, width)}${theme.reset}${theme.border}|${theme.reset}\n`;
+  frame += `${theme.border}+${"-".repeat(width)}+${theme.reset}\n`;
+  frame += `${theme.border}|${theme.reset}${padText(footer, width)}${theme.border}|${theme.reset}\n`;
+  frame += `${theme.border}+${"-".repeat(width)}+${theme.reset}\n`;
+  output.write(frame);
 }
 
 function renderDashboard(uiState: UiState, session: SessionState): void {
@@ -335,10 +329,8 @@ async function selectOption(
   emitKeypressEvents(input);
 
   return await new Promise<string>((resolve) => {
-
     const cleanup = () => {
       input.off("keypress", onKeypress);
-      input.setRawMode(false);
     };
 
     const onKeypress = (str: string | undefined, key: { name?: string; ctrl?: boolean }) => {
@@ -428,7 +420,6 @@ async function selectOption(
       }
     };
 
-    input.setRawMode(true);
     input.resume();
     input.on("keypress", onKeypress);
     renderDashboard(uiState, session);
@@ -540,7 +531,6 @@ async function questionInDashboard(
   return await new Promise<string>((resolve) => {
     const cleanup = () => {
       input.off("keypress", onKeypress);
-      input.setRawMode(false);
       uiState.inlinePromptLabel = undefined;
       uiState.inlinePromptValue = undefined;
       renderDashboard(uiState, session);
@@ -574,13 +564,13 @@ async function questionInDashboard(
       }
     };
 
-    input.setRawMode(true);
     input.resume();
     input.on("keypress", onKeypress);
   });
 }
 
 export async function cmdTui(): Promise<void> {
+  const useRawTui = input.isTTY && output.isTTY && typeof input.setRawMode === "function";
   const initialIndex = INTERACTIVE_ACTIONS.findIndex((option) => option.key === "1");
   const uiState: UiState = {
     activeIndex: initialIndex >= 0 ? initialIndex : 0,
@@ -594,6 +584,14 @@ export async function cmdTui(): Promise<void> {
   const rl = createInterface({ input, output });
 
   try {
+    if (useRawTui) {
+      emitKeypressEvents(input);
+      input.setRawMode(true);
+      input.resume();
+      // Alternate screen isolates dashboard output from shell scrollback/input line.
+      output.write("\x1b[?1049h\x1b[?25l");
+    }
+
     for (;;) {
       let choice = await selectOption(rl, session, uiState);
       if (choice === "0") {
@@ -754,6 +752,10 @@ export async function cmdTui(): Promise<void> {
       }
     }
   } finally {
+    if (useRawTui) {
+      input.setRawMode(false);
+      output.write("\x1b[?25h\x1b[?1049l");
+    }
     rl.close();
   }
 }
