@@ -387,7 +387,7 @@ Runs an MCP server AI agents can connect to.
 xint mcp --sse --port=3000
 
 # Optional: require bearer auth (recommended if binding beyond loopback)
-XINT_MCP_AUTH_TOKEN=change-me xint mcp --sse --host=127.0.0.1
+XINT_MCP_AUTH_TOKEN=replace-with-long-random-token xint mcp --sse --host=127.0.0.1
 ```
 
 Security defaults:

@@ -53,7 +53,7 @@ For X API details (endpoints, operators, response format): read `references/x-ap
 This skill requires sensitive credentials. Follow these guidelines:
 
 ### Credentials
-- **X_BEARER_TOKEN**: Required for X API. Treat as a secret - only set in environment or `.env` file
+- **X_BEARER_TOKEN**: Required for X API. Treat as a secret - prefer exported environment variables (optional project-local `.env`)
 - **XAI_API_KEY**: Optional, needed for AI analysis. Also a secret
 - **X_CLIENT_ID**: Optional, needed for OAuth. Less sensitive but don't expose publicly
 - **XAI_MANAGEMENT_API_KEY**: Optional, for collections management
@@ -70,7 +70,7 @@ This skill requires sensitive credentials. Follow these guidelines:
 - Avoid sending sensitive search queries or token-bearing URLs to third-party destinations
 
 ### Runtime Notes
-- This document is descriptive; it does not modify runtime/system prompts
+- This file documents usage and safety controls for the CLI only.
 - Network listeners are opt-in (`mcp --sse`) and disabled by default
 - Webhook delivery is opt-in (`--webhook`) and disabled by default
 
