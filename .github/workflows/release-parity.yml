@@ -1,0 +1,45 @@
+name: Release Parity
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout xint
+        uses: actions/checkout@v4
+
+      - name: Checkout xint-rs
+        uses: actions/checkout@v4
+        with:
+          repository: 0xNyk/xint-rs
+          path: xint-rs
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install xint deps
+        run: bun install --frozen-lockfile
+
+      - name: Generate manifests
+        run: |
+          bun run xint.ts capabilities --compact > /tmp/xint-ts-capabilities.json
+          cargo run --manifest-path xint-rs/Cargo.toml -- capabilities --compact > /tmp/xint-rs-capabilities.json
+
+      - name: Check capability contract parity
+        run: bun scripts/check-capability-contract.mjs /tmp/xint-ts-capabilities.json /tmp/xint-rs-capabilities.json
+
+      - name: Check release version parity
+        run: >
+          bun scripts/check-release-version-parity.mjs
+          package.json
+          xint-rs/Cargo.toml
+          /tmp/xint-ts-capabilities.json
+          /tmp/xint-rs-capabilities.json

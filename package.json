@@ -41,6 +41,8 @@
   "license": "MIT",
   "scripts": {
     "start": "bun run xint.ts",
+    "typecheck": "bun x tsc --noEmit -p tsconfig.typecheck.json",
+    "test": "bun test",
     "search": "bun run xint.ts search",
     "trends": "bun run xint.ts trends",
     "mcp": "bun run xint.ts mcp-server",

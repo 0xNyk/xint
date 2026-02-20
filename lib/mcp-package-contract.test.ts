@@ -80,8 +80,13 @@ describe("mcp package api contract", () => {
     const parsed = JSON.parse(String(response || "{}")) as {
       result: { content: Array<{ text: string }> };
     };
-    const payload = JSON.parse(parsed.result.content[0].text) as { package_id: string };
-    expect(payload.package_id).toBe("pkg_123");
+    const payload = JSON.parse(parsed.result.content[0].text) as {
+      type: string;
+      message: string;
+      data: { package_id: string };
+    };
+    expect(payload.type).toBe("success");
+    expect(payload.data.package_id).toBe("pkg_123");
 
     restoreEnv("XINT_PACKAGE_API_BASE_URL", previousBase);
     restoreEnv("XINT_PACKAGE_API_KEY", previousKey);

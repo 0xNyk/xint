@@ -2,19 +2,13 @@ import { join } from "path";
 import { createInterface } from "readline/promises";
 import { emitKeypressEvents } from "readline";
 import { stdin as input, stdout as output } from "process";
-
-type MenuOption = {
-  key: string;
-  label: string;
-  aliases: string[];
-  hint: string;
-};
-
-type CommandMeta = {
-  summary: string;
-  example: string;
-  costHint: string;
-};
+import {
+  INTERACTIVE_ACTIONS,
+  normalizeInteractiveChoice,
+  scoreInteractiveAction,
+  type InteractiveAction,
+} from "./actions";
+import { buildTuiExecutionPlan } from "./tui_adapter";
 
 type SessionState = {
   lastSearch?: string;
@@ -41,55 +35,10 @@ type UiState = {
   tab: DashboardTab;
   outputOffset: number;
   outputSearch: string;
+  inlinePromptLabel?: string;
+  inlinePromptValue?: string;
 };
-
-const MENU_OPTIONS: MenuOption[] = [
-  { key: "1", label: "Search", aliases: ["search", "s"], hint: "keyword, topic, or boolean query" },
-  { key: "2", label: "Trends", aliases: ["trends", "trend", "t"], hint: "location name or blank for global" },
-  { key: "3", label: "Profile", aliases: ["profile", "user", "p"], hint: "username (without @)" },
-  { key: "4", label: "Thread", aliases: ["thread", "th"], hint: "tweet id or tweet url" },
-  { key: "5", label: "Article", aliases: ["article", "a"], hint: "article url or tweet url" },
-  { key: "6", label: "Help", aliases: ["help", "h", "?"], hint: "show full CLI help" },
-  { key: "0", label: "Exit", aliases: ["exit", "quit", "q"], hint: "close interactive mode" },
-];
-
-const COMMAND_META: Record<string, CommandMeta> = {
-  "1": {
-    summary: "Discover relevant posts with ranked result quality.",
-    example: 'xint search "open-source ai agents"',
-    costHint: "Low-medium (depends on query depth)",
-  },
-  "2": {
-    summary: "Surface current trend clusters globally or by location.",
-    example: 'xint trends "San Francisco"',
-    costHint: "Low",
-  },
-  "3": {
-    summary: "Inspect profile metadata and recent activity context.",
-    example: "xint profile 0xNyk",
-    costHint: "Low",
-  },
-  "4": {
-    summary: "Expand a tweet into threaded conversation context.",
-    example: "xint thread https://x.com/.../status/...",
-    costHint: "Medium",
-  },
-  "5": {
-    summary: "Fetch article content from URL or tweet-linked article.",
-    example: "xint article https://x.com/.../status/...",
-    costHint: "Medium-high (fetch + parse)",
-  },
-  "6": {
-    summary: "Display full command reference and flags.",
-    example: "xint --help",
-    costHint: "None",
-  },
-  "0": {
-    summary: "Exit interactive dashboard.",
-    example: "q",
-    costHint: "None",
-  },
-};
+type UiPhase = "IDLE" | "INPUT" | "RUNNING" | "DONE" | "ERROR";
 
 const THEMES: Record<string, Theme> = {
   minimal: { accent: "\x1b[1m", border: "", muted: "", reset: "\x1b[0m" },
@@ -114,17 +63,6 @@ function activeTheme(): Theme {
   return THEMES[requested] ?? THEMES.classic;
 }
 
-function normalizeChoice(raw: string | undefined | null): string {
-  if (typeof raw !== "string") return "";
-  const value = raw.trim().toLowerCase();
-  if (!value) return "";
-  const byKey = MENU_OPTIONS.find((option) => option.key === value);
-  if (byKey) return byKey.key;
-  const byAlias = MENU_OPTIONS.find((option) => option.aliases.includes(value));
-  if (byAlias) return byAlias.key;
-  return "";
-}
-
 function clipText(value: string, width: number): string {
   if (width <= 0) return "";
   if (value.length <= width) return value;
@@ -136,27 +74,13 @@ function padText(value: string, width: number): string {
   return clipText(value, width).padEnd(width, " ");
 }
 
-function scoreOption(option: MenuOption, query: string): number {
-  const q = query.toLowerCase();
-  if (!q) return 0;
-  let score = 0;
-  if (option.key === q) score += 100;
-  if (option.label.toLowerCase() === q) score += 90;
-  if (option.aliases.includes(q)) score += 80;
-  if (option.label.toLowerCase().startsWith(q)) score += 70;
-  if (option.aliases.some((alias) => alias.startsWith(q))) score += 60;
-  if (option.label.toLowerCase().includes(q)) score += 40;
-  if (option.hint.toLowerCase().includes(q)) score += 20;
-  return score;
-}
-
-function matchPalette(query: string): MenuOption | null {
+function matchPalette(query: string): InteractiveAction | null {
   const trimmed = query.trim();
   if (!trimmed) return null;
-  let best: MenuOption | null = null;
+  let best: InteractiveAction | null = null;
   let bestScore = 0;
-  for (const option of MENU_OPTIONS) {
-    const score = scoreOption(option, trimmed);
+  for (const option of INTERACTIVE_ACTIONS) {
+    const score = scoreInteractiveAction(option, trimmed);
     if (score > bestScore) {
       bestScore = score;
       best = option;
@@ -179,7 +103,7 @@ function nextTab(tab: DashboardTab): DashboardTab {
 
 function buildMenuLines(activeIndex: number): string[] {
   const lines: string[] = ["Menu", ""];
-  MENU_OPTIONS.forEach((option, index) => {
+  INTERACTIVE_ACTIONS.forEach((option, index) => {
     const pointer = index === activeIndex ? ">" : " ";
     const aliases = option.aliases.length > 0 ? ` (${option.aliases.join(", ")})` : "";
     lines.push(`${pointer} ${option.key}) ${option.label}${aliases}`);
@@ -189,20 +113,36 @@ function buildMenuLines(activeIndex: number): string[] {
 }
 
 function buildCommandDrawer(activeIndex: number): string[] {
-  const selected = MENU_OPTIONS[activeIndex] ?? MENU_OPTIONS[0];
-  const meta = COMMAND_META[selected.key] ?? {
-    summary: "No metadata available.",
-    example: "-",
-    costHint: "Unknown",
-  };
+  const selected = INTERACTIVE_ACTIONS[activeIndex] ?? INTERACTIVE_ACTIONS[0];
   return [
     "Command details",
     "",
     `Selected: ${selected.label}`,
-    `Summary: ${meta.summary}`,
-    `Example: ${meta.example}`,
-    `Cost: ${meta.costHint}`,
+    `Summary: ${selected.summary}`,
+    `Example: ${selected.example}`,
+    `Cost: ${selected.costHint}`,
   ];
+}
+
+function resolveUiPhase(session: SessionState, uiState: UiState): UiPhase {
+  if (uiState.inlinePromptLabel) return "INPUT";
+  const status = (session.lastStatus ?? "").toLowerCase();
+  if (status.startsWith("running")) return "RUNNING";
+  if (status.includes("failed") || status.includes("error")) return "ERROR";
+  if (status.includes("success")) return "DONE";
+  return "IDLE";
+}
+
+function phaseBadge(phase: UiPhase): string {
+  if (phase === "RUNNING") {
+    const frames = ["|", "/", "-", "\\"];
+    const index = Math.floor(Date.now() / 120) % frames.length;
+    return `[${phase} ${frames[index]}]`;
+  }
+  if (phase === "INPUT") return `[${phase} <>]`;
+  if (phase === "DONE") return `[${phase} ok]`;
+  if (phase === "ERROR") return `[${phase} !!]`;
+  return `[${phase}]`;
 }
 
 function outputViewLines(session: SessionState, uiState: UiState, viewport: number): string[] {
@@ -222,12 +162,20 @@ function outputViewLines(session: SessionState, uiState: UiState, viewport: numb
   const lines: string[] = [
     "Last run",
     "",
+    `phase: ${phaseBadge(resolveUiPhase(session, uiState))}`,
     `command: ${session.lastCommand ?? "-"}`,
     `status: ${session.lastStatus ?? "-"}`,
     `filter: ${uiState.outputSearch || "(none)"}`,
     "",
     "output:",
   ];
+
+  if (uiState.inlinePromptLabel) {
+    lines.push("");
+    lines.push(`${uiState.inlinePromptLabel}`);
+    lines.push(`> ${(uiState.inlinePromptValue ?? "")}█`);
+    lines.push("");
+  }
 
   if (windowLines.length === 0) {
     lines.push("(no output lines for current filter)");
@@ -254,13 +202,26 @@ function buildTabLines(session: SessionState, uiState: UiState, viewport: number
   return outputViewLines(session, uiState, viewport);
 }
 
+function buildStatusLine(session: SessionState, uiState: UiState, width: number): string {
+  const selected = INTERACTIVE_ACTIONS[uiState.activeIndex] ?? INTERACTIVE_ACTIONS[0];
+  const phase = resolveUiPhase(session, uiState);
+  const focus = uiState.inlinePromptLabel
+    ? `input:${uiState.inlinePromptLabel}`
+    : `tab:${tabLabel(uiState.tab)}`;
+  const status = session.lastStatus ?? "-";
+  return padText(
+    ` ${phaseBadge(phase)} ${selected.key}:${selected.label} | ${focus} | ${status} `,
+    Math.max(1, width),
+  );
+}
+
 function renderDoublePane(uiState: UiState, session: SessionState, columns: number, rows: number): void {
   const theme = activeTheme();
   const leftBoxWidth = Math.max(46, Math.floor(columns * 0.45));
   const rightBoxWidth = Math.max(30, columns - leftBoxWidth - 1);
   const leftInner = Math.max(20, leftBoxWidth - 2);
   const rightInner = Math.max(20, rightBoxWidth - 2);
-  const totalRows = Math.max(12, rows - 7);
+  const totalRows = Math.max(12, rows - 8);
 
   const leftLines = buildMenuLines(uiState.activeIndex);
   const rightLines = buildTabLines(session, uiState, totalRows).slice(-totalRows);
@@ -293,6 +254,9 @@ function renderDoublePane(uiState: UiState, session: SessionState, columns: numb
   }
 
   output.write(`${theme.border}+${"-".repeat(leftBoxWidth - 2)}+ +${"-".repeat(rightBoxWidth - 2)}+${theme.reset}\n`);
+  output.write(
+    `${theme.border}|${theme.reset}${theme.accent}${buildStatusLine(session, uiState, Math.max(1, columns - 2))}${theme.reset}${theme.border}|${theme.reset}\n`,
+  );
   const footer = " Up/Down Navigate | Enter Run | Tab Tabs | F Search Output | PgUp/PgDn Scroll | / Palette | q Quit ";
   output.write(`${theme.border}|${theme.reset}${padText(footer, Math.max(1, columns - 2))}${theme.border}|${theme.reset}\n`);
   output.write(`${theme.border}+${"-".repeat(Math.max(1, columns - 2))}+${theme.reset}\n`);
@@ -301,7 +265,7 @@ function renderDoublePane(uiState: UiState, session: SessionState, columns: numb
 function renderSinglePane(uiState: UiState, session: SessionState, columns: number, rows: number): void {
   const theme = activeTheme();
   const width = Math.max(30, columns - 2);
-  const totalRows = Math.max(10, rows - 6);
+  const totalRows = Math.max(10, rows - 7);
   const tabs = (["commands", "output", "help"] as DashboardTab[])
     .map((tab, index) => {
       const label = `${index + 1}:${tabLabel(tab)}`;
@@ -335,6 +299,10 @@ function renderSinglePane(uiState: UiState, session: SessionState, columns: numb
 
   const footer = " Tab Tabs | F Search Output | PgUp/PgDn Scroll | / Palette | q Quit ";
   output.write(`${theme.border}+${"-".repeat(width)}+${theme.reset}\n`);
+  output.write(
+    `${theme.border}|${theme.reset}${theme.accent}${buildStatusLine(session, uiState, width)}${theme.reset}${theme.border}|${theme.reset}\n`,
+  );
+  output.write(`${theme.border}+${"-".repeat(width)}+${theme.reset}\n`);
   output.write(`${theme.border}|${theme.reset}${padText(footer, width)}${theme.border}|${theme.reset}\n`);
   output.write(`${theme.border}+${"-".repeat(width)}+${theme.reset}\n`);
 }
@@ -357,31 +325,23 @@ async function selectOption(
   if (!input.isTTY || !output.isTTY || typeof input.setRawMode !== "function") {
     output.write("\n=== xint interactive ===\n");
     output.write("Type a number or alias.\n");
-    MENU_OPTIONS.forEach((option) => {
+    INTERACTIVE_ACTIONS.forEach((option) => {
       const aliases = option.aliases.length > 0 ? ` (${option.aliases.join(", ")})` : "";
       output.write(`${option.key}) ${option.label}${aliases}\n`);
     });
-    return normalizeChoice(await rl.question("\nSelect option (number or alias): "));
+    return normalizeInteractiveChoice(await rl.question("\nSelect option (number or alias): "));
   }
 
   emitKeypressEvents(input);
 
   return await new Promise<string>((resolve) => {
-    let paletteOpen = false;
 
     const cleanup = () => {
       input.off("keypress", onKeypress);
       input.setRawMode(false);
     };
 
-    const reopenRaw = () => {
-      input.setRawMode(true);
-      renderDashboard(uiState, session);
-    };
-
     const onKeypress = (str: string | undefined, key: { name?: string; ctrl?: boolean }) => {
-      if (paletteOpen) return;
-
       if (key.ctrl && key.name === "c") {
         cleanup();
         resolve("0");
@@ -389,12 +349,13 @@ async function selectOption(
       }
 
       if (key.name === "up") {
-        uiState.activeIndex = (uiState.activeIndex - 1 + MENU_OPTIONS.length) % MENU_OPTIONS.length;
+        uiState.activeIndex =
+          (uiState.activeIndex - 1 + INTERACTIVE_ACTIONS.length) % INTERACTIVE_ACTIONS.length;
         renderDashboard(uiState, session);
         return;
       }
       if (key.name === "down") {
-        uiState.activeIndex = (uiState.activeIndex + 1) % MENU_OPTIONS.length;
+        uiState.activeIndex = (uiState.activeIndex + 1) % INTERACTIVE_ACTIONS.length;
         renderDashboard(uiState, session);
         return;
       }
@@ -414,7 +375,8 @@ async function selectOption(
         return;
       }
       if (key.name === "return") {
-        const selected = MENU_OPTIONS[uiState.activeIndex];
+        const selected = INTERACTIVE_ACTIONS[uiState.activeIndex];
+        uiState.tab = "output";
         cleanup();
         resolve(selected?.key ?? "0");
         return;
@@ -446,40 +408,21 @@ async function selectOption(
         return;
       }
       if (str?.toLowerCase() === "f") {
-        paletteOpen = true;
-        input.setRawMode(false);
-        rl.question("\nOutput search (blank clears): ").then((query) => {
-          uiState.outputSearch = query.trim();
-          uiState.outputOffset = 0;
-          uiState.tab = "output";
-          session.lastStatus = uiState.outputSearch
-            ? `output filter active: ${uiState.outputSearch}`
-            : "output filter cleared";
-          paletteOpen = false;
-          reopenRaw();
-        });
+        uiState.tab = "output";
+        cleanup();
+        resolve("__filter__");
         return;
       }
       if (str === "/") {
-        paletteOpen = true;
-        input.setRawMode(false);
-        rl.question("\nPalette (/): ").then((query) => {
-          const match = matchPalette(query);
-          if (match) {
-            uiState.activeIndex = MENU_OPTIONS.findIndex((option) => option.key === match.key);
-            cleanup();
-            resolve(match.key);
-            return;
-          }
-          session.lastStatus = `no palette match: ${query.trim() || "(empty)"}`;
-          paletteOpen = false;
-          reopenRaw();
-        });
+        uiState.tab = "output";
+        cleanup();
+        resolve("__palette__");
         return;
       }
 
-      const normalized = normalizeChoice(typeof str === "string" ? str : "");
+      const normalized = normalizeInteractiveChoice(typeof str === "string" ? str : "");
       if (normalized) {
+        uiState.tab = "output";
         cleanup();
         resolve(normalized);
       }
@@ -585,14 +528,61 @@ async function questionInDashboard(
   uiState: UiState,
   session: SessionState,
 ): Promise<string> {
-  if (input.isTTY && output.isTTY) {
-    renderDashboard(uiState, session);
+  if (!input.isTTY || !output.isTTY || typeof input.setRawMode !== "function") {
+    return await rl.question(`\n${label}`);
   }
-  return await rl.question(`\n${label}`);
+
+  emitKeypressEvents(input);
+  uiState.tab = "output";
+  uiState.inlinePromptLabel = label;
+  uiState.inlinePromptValue = "";
+  renderDashboard(uiState, session);
+
+  return await new Promise<string>((resolve) => {
+    const cleanup = () => {
+      input.off("keypress", onKeypress);
+      input.setRawMode(false);
+      uiState.inlinePromptLabel = undefined;
+      uiState.inlinePromptValue = undefined;
+      renderDashboard(uiState, session);
+    };
+
+    const onKeypress = (str: string | undefined, key: { name?: string; ctrl?: boolean }) => {
+      if (key.ctrl && key.name === "c") {
+        cleanup();
+        resolve("");
+        return;
+      }
+      if (key.name === "escape") {
+        cleanup();
+        resolve("");
+        return;
+      }
+      if (key.name === "return") {
+        const value = uiState.inlinePromptValue ?? "";
+        cleanup();
+        resolve(value);
+        return;
+      }
+      if (key.name === "backspace") {
+        uiState.inlinePromptValue = (uiState.inlinePromptValue ?? "").slice(0, -1);
+        renderDashboard(uiState, session);
+        return;
+      }
+      if (typeof str === "string" && str.length > 0 && !key.ctrl) {
+        uiState.inlinePromptValue = `${uiState.inlinePromptValue ?? ""}${str}`;
+        renderDashboard(uiState, session);
+      }
+    };
+
+    input.setRawMode(true);
+    input.resume();
+    input.on("keypress", onKeypress);
+  });
 }
 
 export async function cmdTui(): Promise<void> {
-  const initialIndex = MENU_OPTIONS.findIndex((option) => option.key === "1");
+  const initialIndex = INTERACTIVE_ACTIONS.findIndex((option) => option.key === "1");
   const uiState: UiState = {
     activeIndex: initialIndex >= 0 ? initialIndex : 0,
     tab: "output",
@@ -606,10 +596,31 @@ export async function cmdTui(): Promise<void> {
 
   try {
     for (;;) {
-      const choice = await selectOption(rl, session, uiState);
+      let choice = await selectOption(rl, session, uiState);
       if (choice === "0") {
         console.log("Exiting xint interactive mode.");
         break;
+      }
+      if (choice === "__filter__") {
+        const query = await questionInDashboard(rl, "Output search (blank clears): ", uiState, session);
+        uiState.outputSearch = query.trim();
+        uiState.outputOffset = 0;
+        uiState.tab = "output";
+        session.lastStatus = uiState.outputSearch
+          ? `output filter active: ${uiState.outputSearch}`
+          : "output filter cleared";
+        continue;
+      }
+      if (choice === "__palette__") {
+        const query = await questionInDashboard(rl, "Palette (/): ", uiState, session);
+        const match = matchPalette(query);
+        if (!match) {
+          session.lastStatus = `no palette match: ${query.trim() || "(empty)"}`;
+          continue;
+        }
+        uiState.activeIndex = INTERACTIVE_ACTIONS.findIndex((option) => option.key === match.key);
+        uiState.tab = "output";
+        choice = match.key;
       }
       if (!choice) {
         session.lastStatus = "invalid selection";
@@ -632,8 +643,10 @@ export async function cmdTui(): Promise<void> {
               "Query",
             );
             session.lastSearch = query;
-            session.lastCommand = `xint search ${query}`;
-            const result = await runSubcommand(["search", query], session, uiState);
+            const planResult = buildTuiExecutionPlan(choice, query);
+            if (planResult.type === "error" || !planResult.data) throw new Error(planResult.message);
+            session.lastCommand = planResult.data.command;
+            const result = await runSubcommand(planResult.data.args, session, uiState);
             session.lastStatus = result.status;
             session.lastOutputLines = result.outputLines;
             break;
@@ -649,8 +662,10 @@ export async function cmdTui(): Promise<void> {
               session.lastLocation,
             );
             session.lastLocation = location;
-            session.lastCommand = location ? `xint trends ${location}` : "xint trends";
-            const result = await runSubcommand(location ? ["trends", location] : ["trends"], session, uiState);
+            const planResult = buildTuiExecutionPlan(choice, location);
+            if (planResult.type === "error" || !planResult.data) throw new Error(planResult.message);
+            session.lastCommand = planResult.data.command;
+            const result = await runSubcommand(planResult.data.args, session, uiState);
             session.lastStatus = result.status;
             session.lastOutputLines = result.outputLines;
             break;
@@ -669,8 +684,10 @@ export async function cmdTui(): Promise<void> {
               "Username",
             ).replace(/^@/, "");
             session.lastUsername = username;
-            session.lastCommand = `xint profile ${username}`;
-            const result = await runSubcommand(["profile", username], session, uiState);
+            const planResult = buildTuiExecutionPlan(choice, username);
+            if (planResult.type === "error" || !planResult.data) throw new Error(planResult.message);
+            session.lastCommand = planResult.data.command;
+            const result = await runSubcommand(planResult.data.args, session, uiState);
             session.lastStatus = result.status;
             session.lastOutputLines = result.outputLines;
             break;
@@ -689,8 +706,10 @@ export async function cmdTui(): Promise<void> {
               "Tweet ID/URL",
             );
             session.lastTweetRef = tweetRef;
-            session.lastCommand = `xint thread ${tweetRef}`;
-            const result = await runSubcommand(["thread", tweetRef], session, uiState);
+            const planResult = buildTuiExecutionPlan(choice, tweetRef);
+            if (planResult.type === "error" || !planResult.data) throw new Error(planResult.message);
+            session.lastCommand = planResult.data.command;
+            const result = await runSubcommand(planResult.data.args, session, uiState);
             session.lastStatus = result.status;
             session.lastOutputLines = result.outputLines;
             break;
@@ -709,15 +728,19 @@ export async function cmdTui(): Promise<void> {
               "Article URL",
             );
             session.lastArticleUrl = url;
-            session.lastCommand = `xint article ${url}`;
-            const result = await runSubcommand(["article", url], session, uiState);
+            const planResult = buildTuiExecutionPlan(choice, url);
+            if (planResult.type === "error" || !planResult.data) throw new Error(planResult.message);
+            session.lastCommand = planResult.data.command;
+            const result = await runSubcommand(planResult.data.args, session, uiState);
             session.lastStatus = result.status;
             session.lastOutputLines = result.outputLines;
             break;
           }
           case "6": {
-            session.lastCommand = "xint --help";
-            const result = await runSubcommand(["--help"], session, uiState);
+            const planResult = buildTuiExecutionPlan(choice);
+            if (planResult.type === "error" || !planResult.data) throw new Error(planResult.message);
+            session.lastCommand = planResult.data.command;
+            const result = await runSubcommand(planResult.data.args, session, uiState);
             session.lastStatus = result.status;
             session.lastOutputLines = result.outputLines;
             break;

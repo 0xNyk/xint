@@ -91,6 +91,12 @@ interface WorkspaceUsage {
   updated_at: string;
 }
 
+type WorkspaceUsageCounterKey =
+  | "package_create_count"
+  | "package_query_count"
+  | "package_refresh_count"
+  | "package_publish_count";
+
 interface WorkspaceRecord {
   id: string;
   name: string;
@@ -328,11 +334,9 @@ function countPackagesForWorkspace(store: Store, workspaceId: string): number {
   return Object.values(store.packages).filter((pkg) => pkg.tenant_id === workspaceId).length;
 }
 
-function bumpWorkspaceUsage(workspace: WorkspaceRecord, key: keyof WorkspaceUsage): void {
+function bumpWorkspaceUsage(workspace: WorkspaceRecord, key: WorkspaceUsageCounterKey): void {
   const current = workspace.usage[key];
-  if (typeof current === "number") {
-    workspace.usage[key] = current + 1;
-  }
+  workspace.usage[key] = current + 1;
   workspace.usage.updated_at = nowIso();
 }
 
