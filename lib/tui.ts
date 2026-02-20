@@ -38,6 +38,7 @@ type UiState = {
   inlinePromptLabel?: string;
   inlinePromptValue?: string;
 };
+
 type UiPhase = "IDLE" | "INPUT" | "RUNNING" | "DONE" | "ERROR";
 
 const THEMES: Record<string, Theme> = {
@@ -72,6 +73,35 @@ function clipText(value: string, width: number): string {
 
 function padText(value: string, width: number): string {
   return clipText(value, width).padEnd(width, " ");
+}
+
+function buildTabs(uiState: UiState): string {
+  return (["commands", "output", "help"] as DashboardTab[])
+    .map((tab, index) => {
+      const label = `${index + 1}:${tabLabel(tab)}`;
+      return tab === uiState.tab ? `‹${label}›` : `[${label}]`;
+    })
+    .join(" ");
+}
+
+function buildHeaderTracker(uiState: UiState, width: number): string {
+  const railWidth = Math.max(8, Math.min(18, width));
+  const cursorBasis = uiState.inlinePromptLabel
+    ? (uiState.inlinePromptValue ?? "").length
+    : uiState.activeIndex * 4 + uiState.outputOffset;
+  const pos = cursorBasis % railWidth;
+  const left = "·".repeat(pos);
+  const right = "·".repeat(Math.max(0, railWidth - pos - 1));
+  return `focus ${left}●${right}`;
+}
+
+function sanitizeOutputLine(line: string): string {
+  const ansiCsi = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
+  const ansiOsc = /\x1b\][^\x07]*(\x07|\x1b\\)/g;
+  return line
+    .replace(ansiOsc, "")
+    .replace(ansiCsi, "")
+    .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
 }
 
 function matchPalette(query: string): InteractiveAction | null {
@@ -172,7 +202,7 @@ function outputViewLines(session: SessionState, uiState: UiState, viewport: numb
 
   if (uiState.inlinePromptLabel) {
     lines.push("");
-    lines.push(`${uiState.inlinePromptLabel}`);
+    lines.push(uiState.inlinePromptLabel);
     lines.push(`> ${(uiState.inlinePromptValue ?? "")}█`);
     lines.push("");
   }
@@ -221,20 +251,17 @@ function renderDoublePane(uiState: UiState, session: SessionState, columns: numb
   const rightBoxWidth = Math.max(30, columns - leftBoxWidth - 1);
   const leftInner = Math.max(20, leftBoxWidth - 2);
   const rightInner = Math.max(20, rightBoxWidth - 2);
-  const totalRows = Math.max(12, rows - 8);
+  const totalRows = Math.max(12, rows - 9);
 
   const leftLines = buildMenuLines(uiState.activeIndex);
   const rightLines = buildTabLines(session, uiState, totalRows).slice(-totalRows);
-  const tabs = (["commands", "output", "help"] as DashboardTab[])
-    .map((tab, index) => {
-      const label = `${index + 1}:${tabLabel(tab)}`;
-      return tab === uiState.tab ? `${theme.accent}[ ${label} ]${theme.reset}` : `[ ${label} ]`;
-    })
-    .join(" ");
+  const tabs = buildTabs(uiState);
+  const tracker = buildHeaderTracker(uiState, 16);
 
   let frame = "\x1b[2J\x1b[H";
   frame += `${theme.border}+${"-".repeat(Math.max(1, columns - 2))}+${theme.reset}\n`;
   frame += `${theme.border}|${theme.reset}${padText(` xint dashboard ${tabs}`, Math.max(1, columns - 2))}${theme.border}|${theme.reset}\n`;
+  frame += `${theme.border}|${theme.reset}${theme.muted}${padText(` ${tracker}`, Math.max(1, columns - 2))}${theme.reset}${theme.border}|${theme.reset}\n`;
   frame += `${theme.border}+${"-".repeat(leftBoxWidth - 2)}+ +${"-".repeat(rightBoxWidth - 2)}+${theme.reset}\n`;
 
   for (let row = 0; row < totalRows; row += 1) {
@@ -251,7 +278,7 @@ function renderDoublePane(uiState: UiState, session: SessionState, columns: numb
 
   frame += `${theme.border}+${"-".repeat(leftBoxWidth - 2)}+ +${"-".repeat(rightBoxWidth - 2)}+${theme.reset}\n`;
   frame += `${theme.border}|${theme.reset}${theme.accent}${buildStatusLine(session, uiState, Math.max(1, columns - 2))}${theme.reset}${theme.border}|${theme.reset}\n`;
-  const footer = " Up/Down Navigate | Enter Run | Tab Tabs | F Search Output | PgUp/PgDn Scroll | / Palette | q Quit ";
+  const footer = " ↑↓ Move • Enter Run • Tab Views • f Filter • / Palette • PgUp/PgDn Scroll • q Quit ";
   frame += `${theme.border}|${theme.reset}${padText(footer, Math.max(1, columns - 2))}${theme.border}|${theme.reset}\n`;
   frame += `${theme.border}+${"-".repeat(Math.max(1, columns - 2))}+${theme.reset}\n`;
   output.write(frame);
@@ -260,13 +287,9 @@ function renderDoublePane(uiState: UiState, session: SessionState, columns: numb
 function renderSinglePane(uiState: UiState, session: SessionState, columns: number, rows: number): void {
   const theme = activeTheme();
   const width = Math.max(30, columns - 2);
-  const totalRows = Math.max(10, rows - 7);
-  const tabs = (["commands", "output", "help"] as DashboardTab[])
-    .map((tab, index) => {
-      const label = `${index + 1}:${tabLabel(tab)}`;
-      return tab === uiState.tab ? `${theme.accent}[ ${label} ]${theme.reset}` : `[ ${label} ]`;
-    })
-    .join(" ");
+  const totalRows = Math.max(10, rows - 8);
+  const tabs = buildTabs(uiState);
+  const tracker = buildHeaderTracker(uiState, 16);
 
   const lines =
     uiState.tab === "commands"
@@ -276,6 +299,7 @@ function renderSinglePane(uiState: UiState, session: SessionState, columns: numb
   let frame = "\x1b[2J\x1b[H";
   frame += `${theme.border}+${"-".repeat(width)}+${theme.reset}\n`;
   frame += `${theme.border}|${theme.reset}${padText(` xint dashboard ${tabs}`, width)}${theme.border}|${theme.reset}\n`;
+  frame += `${theme.border}|${theme.reset}${theme.muted}${padText(` ${tracker}`, width)}${theme.reset}${theme.border}|${theme.reset}\n`;
   frame += `${theme.border}+${"-".repeat(width)}+${theme.reset}\n`;
 
   for (const line of lines.slice(-totalRows)) {
@@ -292,7 +316,7 @@ function renderSinglePane(uiState: UiState, session: SessionState, columns: numb
     frame += `${theme.border}|${theme.reset}${" ".repeat(width)}${theme.border}|${theme.reset}\n`;
   }
 
-  const footer = " Tab Tabs | F Search Output | PgUp/PgDn Scroll | / Palette | q Quit ";
+  const footer = " Enter Run • Tab Views • f Filter • / Palette • PgUp/PgDn • q Quit ";
   frame += `${theme.border}+${"-".repeat(width)}+${theme.reset}\n`;
   frame += `${theme.border}|${theme.reset}${theme.accent}${buildStatusLine(session, uiState, width)}${theme.reset}${theme.border}|${theme.reset}\n`;
   frame += `${theme.border}+${"-".repeat(width)}+${theme.reset}\n`;
@@ -375,7 +399,6 @@ async function selectOption(
       }
       if (key.name === "escape" || str === "q") {
         cleanup();
-        output.write("\x1b[2J\x1b[H");
         resolve("0");
         return;
       }
@@ -427,7 +450,7 @@ async function selectOption(
 }
 
 function appendOutput(session: SessionState, line: string): void {
-  const trimmed = line.trimEnd();
+  const trimmed = sanitizeOutputLine(line).trimEnd();
   if (!trimmed) return;
   session.lastOutputLines.push(trimmed);
   if (session.lastOutputLines.length > 1200) {
@@ -449,6 +472,7 @@ async function consumeStream(
     const { done, value } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
+    buffer = buffer.replace(/\r(?!\n)/g, "\n");
     const parts = buffer.split(/\r?\n/);
     buffer = parts.pop() ?? "";
     for (const part of parts) {
@@ -588,14 +612,12 @@ export async function cmdTui(): Promise<void> {
       emitKeypressEvents(input);
       input.setRawMode(true);
       input.resume();
-      // Alternate screen isolates dashboard output from shell scrollback/input line.
       output.write("\x1b[?1049h\x1b[?25l");
     }
 
     for (;;) {
       let choice = await selectOption(rl, session, uiState);
       if (choice === "0") {
-        console.log("Exiting xint interactive mode.");
         break;
       }
       if (choice === "__filter__") {
