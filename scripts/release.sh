@@ -10,6 +10,7 @@ REPO_NAME_CLOUD="xint-cloud"
 GITHUB_ORG="0xNyk"
 
 PUBLISH_CLAWDHUB=true
+PUBLISH_CLAWDHUB_CLOUD=false
 PUBLISH_SKILLSH=false
 PUBLISH_HOMEBREW=true
 UPDATE_DOCS=false
@@ -50,6 +51,7 @@ Options:
   --dry-run        Preview release actions without mutating repos
   --ai-skill       Enable both ClawdHub and skills.sh publishing
   --no-clawdhub    Disable ClawdHub publishing for this run
+  --clawdhub-cloud Enable ClawdHub publishing for xint-cloud (disabled by default)
   --skillsh        Enable skills.sh publishing
   --no-homebrew    Disable Homebrew tap formula update/publish
   --docs           Update README/changelog files when present
@@ -987,6 +989,9 @@ while [[ $# -gt 0 ]]; do
     --no-clawdhub)
       PUBLISH_CLAWDHUB=false
       ;;
+    --clawdhub-cloud)
+      PUBLISH_CLAWDHUB_CLOUD=true
+      ;;
     --skillsh)
       PUBLISH_SKILLSH=true
       ;;
@@ -1111,7 +1116,7 @@ if [[ "$PUBLISH_CLAWDHUB" == "true" ]]; then
   if [[ -n "$REPO_NAME_ALT" ]]; then
     publish_clawdhub "$REPO_NAME_ALT"
   fi
-  if [[ -n "$REPO_NAME_CLOUD" ]]; then
+  if [[ -n "$REPO_NAME_CLOUD" && "$PUBLISH_CLAWDHUB_CLOUD" == "true" ]]; then
     publish_clawdhub "$REPO_NAME_CLOUD"
   fi
 fi
