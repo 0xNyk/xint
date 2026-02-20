@@ -11,6 +11,15 @@ describe("tui adapter", () => {
     });
   });
 
+  test("normalizes ampersand in search query", () => {
+    const result = buildTuiExecutionPlan("1", "ai & solana");
+    expect(result.type).toBe("success");
+    expect(result.data).toEqual({
+      command: "xint search ai AND solana",
+      args: ["search", "ai AND solana"],
+    });
+  });
+
   test("builds trends plan with blank input", () => {
     const result = buildTuiExecutionPlan("2", "");
     expect(result.type).toBe("success");

@@ -5,6 +5,13 @@ export type TuiExecutionPlan = {
   args: string[];
 };
 
+function normalizeSearchQuery(value: string): string {
+  return value
+    .replace(/\s*&\s*/g, " AND ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function buildTuiExecutionPlan(
   actionKey: string,
   value?: string,
@@ -14,9 +21,10 @@ export function buildTuiExecutionPlan(
   switch (actionKey) {
     case "1":
       if (!normalized) return actionError("Query is required.");
+      const searchQuery = normalizeSearchQuery(normalized);
       return actionSuccess("Search plan ready.", {
-        command: `xint search ${normalized}`,
-        args: ["search", normalized],
+        command: `xint search ${searchQuery}`,
+        args: ["search", searchQuery],
       });
     case "2":
       if (!normalized) {

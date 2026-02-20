@@ -448,7 +448,6 @@ async function consumeStream(
   stream: ReadableStream<Uint8Array> | null,
   prefix: string,
   session: SessionState,
-  uiState: UiState,
 ): Promise<void> {
   if (!stream) return;
   const reader = stream.getReader();
@@ -463,9 +462,6 @@ async function consumeStream(
     buffer = parts.pop() ?? "";
     for (const part of parts) {
       appendOutput(session, prefix ? `[${prefix}] ${part}` : part);
-      if (input.isTTY && output.isTTY) {
-        renderDashboard(uiState, session);
-      }
     }
   }
 
@@ -499,12 +495,15 @@ async function runSubcommand(
     }
   }, 90);
 
-  const stdoutTask = consumeStream(proc.stdout ?? null, "", session, uiState);
-  const stderrTask = consumeStream(proc.stderr ?? null, "stderr", session, uiState);
+  const stdoutTask = consumeStream(proc.stdout ?? null, "", session);
+  const stderrTask = consumeStream(proc.stderr ?? null, "stderr", session);
 
   const exitCode = await proc.exited;
   await Promise.all([stdoutTask, stderrTask]);
   clearInterval(spinner);
+  if (input.isTTY && output.isTTY) {
+    renderDashboard(uiState, session);
+  }
 
   const status = exitCode === 0 ? "success" : `failed (exit ${exitCode})`;
   return { status, outputLines: session.lastOutputLines.slice(-1200) };

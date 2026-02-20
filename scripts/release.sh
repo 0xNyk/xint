@@ -6,6 +6,7 @@ set -euo pipefail
 
 REPO_NAME="xint"
 REPO_NAME_ALT="xint-rs"
+REPO_NAME_CLOUD="xint-cloud"
 GITHUB_ORG="0xNyk"
 
 PUBLISH_CLAWDHUB=true
@@ -32,6 +33,7 @@ fi
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_PATH_XINT="${REPO_PATH_XINT:-}"
 REPO_PATH_XINT_RS="${REPO_PATH_XINT_RS:-}"
+REPO_PATH_XINT_CLOUD="${REPO_PATH_XINT_CLOUD:-}"
 REPO_PATH_HOMEBREW="${REPO_PATH_HOMEBREW:-}"
 HOMEBREW_TAP_REPO="homebrew-xint"
 REPORT_DIR="${RELEASE_REPORT_DIR:-$ROOT_DIR/reports/releases}"
@@ -69,6 +71,9 @@ Environment variables:
   CHANGELOG_SECURITY
   TWEET_DRAFT
   RELEASE_REPORT_DIR
+  REPO_PATH_XINT
+  REPO_PATH_XINT_RS
+  REPO_PATH_XINT_CLOUD
   REPO_PATH_HOMEBREW
 USAGE
 }
@@ -115,6 +120,9 @@ resolve_repo_path() {
       ;;
     "$REPO_NAME_ALT")
       override="$REPO_PATH_XINT_RS"
+      ;;
+    "$REPO_NAME_CLOUD")
+      override="$REPO_PATH_XINT_CLOUD"
       ;;
   esac
 
@@ -923,8 +931,10 @@ EOF
 generate_release_report() {
   local previous_tag_primary="$1"
   local previous_tag_alt="$2"
-  local release_url_primary="$3"
-  local release_url_alt="$4"
+  local previous_tag_cloud="$3"
+  local release_url_primary="$4"
+  local release_url_alt="$5"
+  local release_url_cloud="$6"
   local report_file
   report_file="$REPORT_DIR/$VERSION.md"
   GENERATED_REPORT_FILE=""
@@ -956,6 +966,9 @@ EOF
   append_repo_release_section "$report_file" "$REPO_NAME" "$previous_tag_primary" "$release_url_primary"
   if [[ -n "$REPO_NAME_ALT" ]]; then
     append_repo_release_section "$report_file" "$REPO_NAME_ALT" "$previous_tag_alt" "$release_url_alt"
+  fi
+  if [[ -n "$REPO_NAME_CLOUD" ]]; then
+    append_repo_release_section "$report_file" "$REPO_NAME_CLOUD" "$previous_tag_cloud" "$release_url_cloud"
   fi
 
   GENERATED_REPORT_FILE="$report_file"
@@ -1033,6 +1046,9 @@ repo_exists "$REPO_NAME" || die "Missing repo directory: $REPO_NAME"
 if [[ -n "$REPO_NAME_ALT" ]]; then
   repo_exists "$REPO_NAME_ALT" || die "Missing repo directory: $REPO_NAME_ALT"
 fi
+if [[ -n "$REPO_NAME_CLOUD" ]]; then
+  repo_exists "$REPO_NAME_CLOUD" || die "Missing repo directory: $REPO_NAME_CLOUD"
+fi
 
 if [[ -z "$VERSION" ]]; then
   VERSION="$(detect_next_version)"
@@ -1042,22 +1058,33 @@ log "Preparing release version: $VERSION"
 
 PREVIOUS_TAG_PRIMARY="$(find_previous_release_tag "$REPO_NAME" "$VERSION")"
 PREVIOUS_TAG_ALT=""
+PREVIOUS_TAG_CLOUD=""
 if [[ -n "$REPO_NAME_ALT" ]]; then
   PREVIOUS_TAG_ALT="$(find_previous_release_tag "$REPO_NAME_ALT" "$VERSION")"
+fi
+if [[ -n "$REPO_NAME_CLOUD" ]]; then
+  PREVIOUS_TAG_CLOUD="$(find_previous_release_tag "$REPO_NAME_CLOUD" "$VERSION")"
 fi
 
 preflight_repo "$REPO_NAME"
 if [[ -n "$REPO_NAME_ALT" ]]; then
   preflight_repo "$REPO_NAME_ALT"
 fi
+if [[ -n "$REPO_NAME_CLOUD" ]]; then
+  preflight_repo "$REPO_NAME_CLOUD"
+fi
 
 log "Bumping manifest versions"
 declare -a RELEASE_FILES_PRIMARY
 declare -a RELEASE_FILES_ALT
+declare -a RELEASE_FILES_CLOUD
 
 collect_release_files "$REPO_NAME" RELEASE_FILES_PRIMARY
 if [[ -n "$REPO_NAME_ALT" ]]; then
   collect_release_files "$REPO_NAME_ALT" RELEASE_FILES_ALT
+fi
+if [[ -n "$REPO_NAME_CLOUD" ]]; then
+  collect_release_files "$REPO_NAME_CLOUD" RELEASE_FILES_CLOUD
 fi
 
 log "Committing release manifests"
@@ -1065,11 +1092,17 @@ commit_repo "$REPO_NAME" "${RELEASE_FILES_PRIMARY[@]}"
 if [[ -n "$REPO_NAME_ALT" ]]; then
   commit_repo "$REPO_NAME_ALT" "${RELEASE_FILES_ALT[@]}"
 fi
+if [[ -n "$REPO_NAME_CLOUD" ]]; then
+  commit_repo "$REPO_NAME_CLOUD" "${RELEASE_FILES_CLOUD[@]}"
+fi
 
 log "Pushing release commits"
 push_repo "$REPO_NAME"
 if [[ -n "$REPO_NAME_ALT" ]]; then
   push_repo "$REPO_NAME_ALT"
+fi
+if [[ -n "$REPO_NAME_CLOUD" ]]; then
+  push_repo "$REPO_NAME_CLOUD"
 fi
 
 if [[ "$PUBLISH_CLAWDHUB" == "true" ]]; then
@@ -1078,6 +1111,9 @@ if [[ "$PUBLISH_CLAWDHUB" == "true" ]]; then
   if [[ -n "$REPO_NAME_ALT" ]]; then
     publish_clawdhub "$REPO_NAME_ALT"
   fi
+  if [[ -n "$REPO_NAME_CLOUD" ]]; then
+    publish_clawdhub "$REPO_NAME_CLOUD"
+  fi
 fi
 
 if [[ "$PUBLISH_SKILLSH" == "true" ]]; then
@@ -1085,6 +1121,9 @@ if [[ "$PUBLISH_SKILLSH" == "true" ]]; then
   publish_skillsh "$REPO_NAME"
   if [[ -n "$REPO_NAME_ALT" ]]; then
     publish_skillsh "$REPO_NAME_ALT"
+  fi
+  if [[ -n "$REPO_NAME_CLOUD" ]]; then
+    publish_skillsh "$REPO_NAME_CLOUD"
   fi
 fi
 
@@ -1123,37 +1162,54 @@ create_github_release "$REPO_NAME" "$RELEASE_NOTES" "$USE_AUTO_NOTES"
 if [[ -n "$REPO_NAME_ALT" ]]; then
   create_github_release "$REPO_NAME_ALT" "$RELEASE_NOTES" "$USE_AUTO_NOTES"
 fi
+if [[ -n "$REPO_NAME_CLOUD" ]]; then
+  create_github_release "$REPO_NAME_CLOUD" "$RELEASE_NOTES" "$USE_AUTO_NOTES"
+fi
 
 log "Publishing Homebrew tap formulas"
 publish_homebrew_tap
 
 RELEASE_URL_PRIMARY="$(release_url_for_repo "$REPO_NAME")"
 RELEASE_URL_ALT=""
+RELEASE_URL_CLOUD=""
 if [[ -n "$REPO_NAME_ALT" ]]; then
   RELEASE_URL_ALT="$(release_url_for_repo "$REPO_NAME_ALT")"
+fi
+if [[ -n "$REPO_NAME_CLOUD" ]]; then
+  RELEASE_URL_CLOUD="$(release_url_for_repo "$REPO_NAME_CLOUD")"
 fi
 
 generate_release_report \
   "$PREVIOUS_TAG_PRIMARY" \
   "$PREVIOUS_TAG_ALT" \
+  "$PREVIOUS_TAG_CLOUD" \
   "$RELEASE_URL_PRIMARY" \
-  "$RELEASE_URL_ALT"
+  "$RELEASE_URL_ALT" \
+  "$RELEASE_URL_CLOUD"
 
 upload_release_report_asset "$REPO_NAME" "$GENERATED_REPORT_FILE"
 if [[ -n "$REPO_NAME_ALT" ]]; then
   upload_release_report_asset "$REPO_NAME_ALT" "$GENERATED_REPORT_FILE"
+fi
+if [[ -n "$REPO_NAME_CLOUD" ]]; then
+  upload_release_report_asset "$REPO_NAME_CLOUD" "$GENERATED_REPORT_FILE"
 fi
 
 embed_release_report_in_body "$REPO_NAME" "$GENERATED_REPORT_FILE"
 if [[ -n "$REPO_NAME_ALT" ]]; then
   embed_release_report_in_body "$REPO_NAME_ALT" "$GENERATED_REPORT_FILE"
 fi
+if [[ -n "$REPO_NAME_CLOUD" ]]; then
+  embed_release_report_in_body "$REPO_NAME_CLOUD" "$GENERATED_REPORT_FILE"
+fi
 
 if [[ -z "${TWEET_DRAFT:-}" ]]; then
   if [[ "$USE_AUTO_NOTES" == "true" ]]; then
     TWEET_DRAFT="xint $VERSION is available.
 
-See GitHub release notes for details."
+$RELEASE_URL_PRIMARY
+$RELEASE_URL_ALT
+$RELEASE_URL_CLOUD"
   else
     TWEET_DRAFT="xint $VERSION is available.
 
