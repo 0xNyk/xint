@@ -19,6 +19,8 @@ type SessionState = {
   lastArticleUrl?: string;
   lastCommand?: string;
   lastStatus?: string;
+  lastStdoutLines: string[];
+  lastStderrLines: string[];
   lastOutputLines: string[];
 };
 
@@ -37,6 +39,7 @@ type UiState = {
   tab: DashboardTab;
   outputOffset: number;
   outputSearch: string;
+  showStderr: boolean;
   inlinePromptLabel?: string;
   inlinePromptValue?: string;
 };
@@ -75,6 +78,7 @@ const HELP_LINES = [
   "  Enter: Run selected command",
   "  Tab: Switch tabs",
   "  F: Output search (filter)",
+  "  E: Toggle stderr stream",
   "  PgUp/PgDn: Scroll output",
   "  /: Command palette",
   "  ?: Open Help tab",
@@ -248,7 +252,8 @@ function phaseBadge(phase: UiPhase): string {
 }
 
 function outputViewLines(session: SessionState, uiState: UiState, viewport: number): string[] {
-  const source = session.lastOutputLines;
+  const source = uiState.showStderr ? session.lastStderrLines : session.lastStdoutLines;
+  const streamName = uiState.showStderr ? "stderr" : "stdout";
   const q = uiState.outputSearch.trim().toLowerCase();
   const filtered =
     q.length === 0 ? source : source.filter((line) => line.toLowerCase().includes(q));
@@ -267,6 +272,7 @@ function outputViewLines(session: SessionState, uiState: UiState, viewport: numb
     `phase: ${phaseBadge(resolveUiPhase(session, uiState))}`,
     `command: ${session.lastCommand ?? "-"}`,
     `status: ${session.lastStatus ?? "-"}`,
+    `stream: ${streamName} (${source.length}) | stdout=${session.lastStdoutLines.length} stderr=${session.lastStderrLines.length}`,
     `filter: ${uiState.outputSearch || "(none)"}`,
     "",
     "output:",
@@ -312,7 +318,7 @@ function buildStatusLine(session: SessionState, uiState: UiState, width: number)
     : `tab:${tabLabel(uiState.tab)}`;
   const status = session.lastStatus ?? "-";
   return padText(
-    ` ${phaseBadge(phase)} ${selected.key}:${selected.label} | ${focus} | ${status} `,
+    ` ${phaseBadge(phase)} ${selected.key}:${selected.label} | ${focus} | stream:${uiState.showStderr ? "stderr" : "stdout"} | ${status} `,
     Math.max(1, width),
   );
 }
@@ -354,7 +360,7 @@ function renderDoublePane(uiState: UiState, session: SessionState, columns: numb
 
   frame += `${theme.border}${border.lj}${border.h.repeat(leftBoxWidth - 2)}${border.rj} ${border.lj}${border.h.repeat(rightBoxWidth - 2)}${border.rj}${theme.reset}\n`;
   frame += `${theme.border}${border.v}${theme.reset}${theme.accent}${buildStatusLine(session, uiState, Math.max(1, columns - 2))}${theme.reset}${theme.border}${border.v}${theme.reset}\n`;
-  const footer = " ↑↓ Move • Enter Run • Tab Views • f Filter • / Palette • PgUp/PgDn Scroll • q Quit ";
+  const footer = " ↑↓ Move • Enter Run • Tab Views • f Filter • e Stream • / Palette • PgUp/PgDn Scroll • q Quit ";
   frame += `${theme.border}${border.v}${theme.reset}${padText(footer, Math.max(1, columns - 2))}${theme.border}${border.v}${theme.reset}\n`;
   frame += `${theme.border}${border.bl}${border.h.repeat(Math.max(1, columns - 2))}${border.br}${theme.reset}\n`;
   output.write(frame);
@@ -396,7 +402,7 @@ function renderSinglePane(uiState: UiState, session: SessionState, columns: numb
     frame += `${theme.border}${border.v}${theme.reset}${" ".repeat(width)}${theme.border}${border.v}${theme.reset}\n`;
   }
 
-  const footer = " Enter Run • Tab Views • f Filter • / Palette • PgUp/PgDn • q Quit ";
+  const footer = " Enter Run • Tab Views • f Filter • e Stream • / Palette • PgUp/PgDn • q Quit ";
   frame += `${theme.border}${border.lj}${border.h.repeat(width)}${border.rj}${theme.reset}\n`;
   frame += `${theme.border}${border.v}${theme.reset}${theme.accent}${buildStatusLine(session, uiState, width)}${theme.reset}${theme.border}${border.v}${theme.reset}\n`;
   frame += `${theme.border}${border.lj}${border.h.repeat(width)}${border.rj}${theme.reset}\n`;
@@ -468,6 +474,12 @@ function applyMenuKeyEvent(
     uiState.tab = "output";
     return { resolve: "__filter__" };
   }
+  if (str?.toLowerCase() === "e") {
+    uiState.tab = "output";
+    uiState.showStderr = !uiState.showStderr;
+    uiState.outputOffset = 0;
+    return {};
+  }
   if (str === "/") {
     uiState.tab = "output";
     return { resolve: "__palette__" };
@@ -501,7 +513,6 @@ function applyPromptKeyEvent(
 
 function applyRunEvent(event: RunEvent, session: SessionState): string | null {
   if (event.type === "line") {
-    appendOutput(session, event.line);
     return null;
   }
   if (event.type === "tick") {
@@ -514,11 +525,13 @@ function applyRunEvent(event: RunEvent, session: SessionState): string | null {
 }
 
 async function selectOption(
-  rl: ReturnType<typeof createInterface>,
+  rl: ReturnType<typeof createInterface> | null,
   session: SessionState,
   uiState: UiState,
+  requestRender: () => void,
 ): Promise<string> {
   if (!input.isTTY || !output.isTTY || typeof input.setRawMode !== "function") {
+    if (!rl) throw new Error("readline interface is unavailable");
     output.write("\n=== xint interactive ===\n");
     output.write("Type a number or alias.\n");
     INTERACTIVE_ACTIONS.forEach((option) => {
@@ -542,18 +555,29 @@ async function selectOption(
         resolve(resolved);
         return;
       }
-      renderDashboard(uiState, session);
+      requestRender();
     };
 
     input.resume();
     input.on("keypress", onKeypress);
-    renderDashboard(uiState, session);
+    requestRender();
   });
 }
 
-function appendOutput(session: SessionState, line: string): void {
+function appendOutput(session: SessionState, line: string, stream: "stdout" | "stderr" = "stdout"): void {
   const trimmed = sanitizeOutputLine(line).trimEnd();
   if (!trimmed) return;
+  if (stream === "stderr") {
+    session.lastStderrLines.push(trimmed);
+    if (session.lastStderrLines.length > 1200) {
+      session.lastStderrLines = session.lastStderrLines.slice(-1200);
+    }
+  } else {
+    session.lastStdoutLines.push(trimmed);
+    if (session.lastStdoutLines.length > 1200) {
+      session.lastStdoutLines = session.lastStdoutLines.slice(-1200);
+    }
+  }
   session.lastOutputLines.push(trimmed);
   if (session.lastOutputLines.length > 1200) {
     session.lastOutputLines = session.lastOutputLines.slice(-1200);
@@ -591,6 +615,7 @@ async function runSubcommand(
   args: string[],
   session: SessionState,
   uiState: UiState,
+  requestRender: () => void,
 ): Promise<{ status: string; outputLines: string[] }> {
   const scriptPath = join(import.meta.dir, "..", "xint.ts");
   const proc = Bun.spawn({
@@ -600,6 +625,8 @@ async function runSubcommand(
   });
 
   session.lastOutputLines = [];
+  session.lastStdoutLines = [];
+  session.lastStderrLines = [];
   uiState.outputOffset = 0;
 
   const spinnerFrames = ["|", "/", "-", "\\"];
@@ -609,7 +636,7 @@ async function runSubcommand(
     const status = applyRunEvent(event, session);
     if (status) finalStatus = status;
     if (input.isTTY && output.isTTY) {
-      renderDashboard(uiState, session);
+      requestRender();
     }
   };
 
@@ -618,10 +645,14 @@ async function runSubcommand(
     spinnerIndex += 1;
   }, 90);
 
-  const stdoutTask = consumeStream(proc.stdout ?? null, "", (line) => dispatch({ type: "line", line }));
-  const stderrTask = consumeStream(proc.stderr ?? null, "stderr", (line) =>
-    dispatch({ type: "line", line }),
-  );
+  const stdoutTask = consumeStream(proc.stdout ?? null, "", (line) => {
+    appendOutput(session, line, "stdout");
+    if (input.isTTY && output.isTTY) requestRender();
+  });
+  const stderrTask = consumeStream(proc.stderr ?? null, "stderr", (line) => {
+    appendOutput(session, line, "stderr");
+    if (input.isTTY && output.isTTY) requestRender();
+  });
 
   const exitCode = await proc.exited;
   await Promise.all([stdoutTask, stderrTask]);
@@ -644,12 +675,14 @@ function promptWithDefault(value: string, previous?: string): string {
 }
 
 async function questionInDashboard(
-  rl: ReturnType<typeof createInterface>,
+  rl: ReturnType<typeof createInterface> | null,
   label: string,
   uiState: UiState,
   session: SessionState,
+  requestRender: () => void,
 ): Promise<string> {
   if (!input.isTTY || !output.isTTY || typeof input.setRawMode !== "function") {
+    if (!rl) throw new Error("readline interface is unavailable");
     return await rl.question(`\n${label}`);
   }
 
@@ -657,14 +690,14 @@ async function questionInDashboard(
   uiState.tab = "output";
   uiState.inlinePromptLabel = label;
   uiState.inlinePromptValue = "";
-  renderDashboard(uiState, session);
+  requestRender();
 
   return await new Promise<string>((resolve) => {
     const cleanup = () => {
       input.off("keypress", onKeypress);
       uiState.inlinePromptLabel = undefined;
       uiState.inlinePromptValue = undefined;
-      renderDashboard(uiState, session);
+      requestRender();
     };
 
     const onKeypress = (str: string | undefined, key: { name?: string; ctrl?: boolean }) => {
@@ -674,7 +707,7 @@ async function questionInDashboard(
         resolve(resolved);
         return;
       }
-      renderDashboard(uiState, session);
+      requestRender();
     };
 
     input.resume();
@@ -684,18 +717,44 @@ async function questionInDashboard(
 
 export async function cmdTui(): Promise<void> {
   const useRawTui = input.isTTY && output.isTTY && typeof input.setRawMode === "function";
+  const frameIntervalMs = 33;
+  let scheduledRender: ReturnType<typeof setTimeout> | null = null;
+  let lastRenderAt = 0;
   const initialIndex = INTERACTIVE_ACTIONS.findIndex((option) => option.key === "1");
   const uiState: UiState = {
     activeIndex: initialIndex >= 0 ? initialIndex : 0,
     tab: "output",
     outputOffset: 0,
     outputSearch: "",
+    showStderr: false,
   };
   const session: SessionState = {
+    lastStdoutLines: [],
+    lastStderrLines: [],
     lastOutputLines: [],
   };
-  const onResize = () => renderDashboard(uiState, session);
-  const rl = createInterface({ input, output });
+  const requestRender = (force = false) => {
+    if (!useRawTui) return;
+    const now = Date.now();
+    const elapsed = now - lastRenderAt;
+    if (force || elapsed >= frameIntervalMs) {
+      if (scheduledRender) {
+        clearTimeout(scheduledRender);
+        scheduledRender = null;
+      }
+      lastRenderAt = now;
+      renderDashboard(uiState, session);
+      return;
+    }
+    if (scheduledRender) return;
+    scheduledRender = setTimeout(() => {
+      scheduledRender = null;
+      lastRenderAt = Date.now();
+      renderDashboard(uiState, session);
+    }, frameIntervalMs - elapsed);
+  };
+  const onResize = () => requestRender(true);
+  const rl = useRawTui ? null : createInterface({ input, output });
 
   try {
     if (useRawTui) {
@@ -707,12 +766,19 @@ export async function cmdTui(): Promise<void> {
     }
 
     for (;;) {
-      let choice = await selectOption(rl, session, uiState);
+      let choice = await selectOption(rl, session, uiState, () => requestRender());
       if (choice === "0") {
         break;
       }
       if (choice === "__filter__") {
-        const query = await questionInDashboard(rl, "Output search (blank clears): ", uiState, session);
+        const query = await questionInDashboard(
+          rl,
+          "Output search (blank clears): ",
+          uiState,
+          session,
+          () => requestRender(),
+        );
+        requestRender(true);
         uiState.outputSearch = query.trim();
         uiState.outputOffset = 0;
         uiState.tab = "output";
@@ -722,7 +788,7 @@ export async function cmdTui(): Promise<void> {
         continue;
       }
       if (choice === "__palette__") {
-        const query = await questionInDashboard(rl, "Palette (/): ", uiState, session);
+        const query = await questionInDashboard(rl, "Palette (/): ", uiState, session, () => requestRender());
         const match = matchPalette(query);
         if (!match) {
           session.lastStatus = `no palette match: ${query.trim() || "(empty)"}`;
@@ -747,6 +813,7 @@ export async function cmdTui(): Promise<void> {
                   `Search query${session.lastSearch ? ` [${session.lastSearch}]` : ""}: `,
                   uiState,
                   session,
+                  () => requestRender(),
                 ),
                 session.lastSearch,
               ),
@@ -756,26 +823,27 @@ export async function cmdTui(): Promise<void> {
             const planResult = buildTuiExecutionPlan(choice, query);
             if (planResult.type === "error" || !planResult.data) throw new Error(planResult.message);
             session.lastCommand = planResult.data.command;
-            const result = await runSubcommand(planResult.data.args, session, uiState);
+            const result = await runSubcommand(planResult.data.args, session, uiState, () => requestRender());
             session.lastStatus = result.status;
             session.lastOutputLines = result.outputLines;
             break;
           }
           case "2": {
             const location = promptWithDefault(
-              await questionInDashboard(
-                rl,
-                `Location (blank for worldwide)${session.lastLocation ? ` [${session.lastLocation}]` : ""}: `,
-                uiState,
-                session,
-              ),
+                await questionInDashboard(
+                  rl,
+                  `Location (blank for worldwide)${session.lastLocation ? ` [${session.lastLocation}]` : ""}: `,
+                  uiState,
+                  session,
+                  () => requestRender(),
+                ),
               session.lastLocation,
             );
             session.lastLocation = location;
             const planResult = buildTuiExecutionPlan(choice, location);
             if (planResult.type === "error" || !planResult.data) throw new Error(planResult.message);
             session.lastCommand = planResult.data.command;
-            const result = await runSubcommand(planResult.data.args, session, uiState);
+            const result = await runSubcommand(planResult.data.args, session, uiState, () => requestRender());
             session.lastStatus = result.status;
             session.lastOutputLines = result.outputLines;
             break;
@@ -788,6 +856,7 @@ export async function cmdTui(): Promise<void> {
                   `Username (@optional)${session.lastUsername ? ` [${session.lastUsername}]` : ""}: `,
                   uiState,
                   session,
+                  () => requestRender(),
                 ),
                 session.lastUsername,
               ),
@@ -797,7 +866,7 @@ export async function cmdTui(): Promise<void> {
             const planResult = buildTuiExecutionPlan(choice, username);
             if (planResult.type === "error" || !planResult.data) throw new Error(planResult.message);
             session.lastCommand = planResult.data.command;
-            const result = await runSubcommand(planResult.data.args, session, uiState);
+            const result = await runSubcommand(planResult.data.args, session, uiState, () => requestRender());
             session.lastStatus = result.status;
             session.lastOutputLines = result.outputLines;
             break;
@@ -810,6 +879,7 @@ export async function cmdTui(): Promise<void> {
                   `Tweet ID or URL${session.lastTweetRef ? ` [${session.lastTweetRef}]` : ""}: `,
                   uiState,
                   session,
+                  () => requestRender(),
                 ),
                 session.lastTweetRef,
               ),
@@ -819,7 +889,7 @@ export async function cmdTui(): Promise<void> {
             const planResult = buildTuiExecutionPlan(choice, tweetRef);
             if (planResult.type === "error" || !planResult.data) throw new Error(planResult.message);
             session.lastCommand = planResult.data.command;
-            const result = await runSubcommand(planResult.data.args, session, uiState);
+            const result = await runSubcommand(planResult.data.args, session, uiState, () => requestRender());
             session.lastStatus = result.status;
             session.lastOutputLines = result.outputLines;
             break;
@@ -832,6 +902,7 @@ export async function cmdTui(): Promise<void> {
                   `Article URL or Tweet URL${session.lastArticleUrl ? ` [${session.lastArticleUrl}]` : ""}: `,
                   uiState,
                   session,
+                  () => requestRender(),
                 ),
                 session.lastArticleUrl,
               ),
@@ -841,7 +912,7 @@ export async function cmdTui(): Promise<void> {
             const planResult = buildTuiExecutionPlan(choice, url);
             if (planResult.type === "error" || !planResult.data) throw new Error(planResult.message);
             session.lastCommand = planResult.data.command;
-            const result = await runSubcommand(planResult.data.args, session, uiState);
+            const result = await runSubcommand(planResult.data.args, session, uiState, () => requestRender());
             session.lastStatus = result.status;
             session.lastOutputLines = result.outputLines;
             break;
@@ -850,7 +921,7 @@ export async function cmdTui(): Promise<void> {
             const planResult = buildTuiExecutionPlan(choice);
             if (planResult.type === "error" || !planResult.data) throw new Error(planResult.message);
             session.lastCommand = planResult.data.command;
-            const result = await runSubcommand(planResult.data.args, session, uiState);
+            const result = await runSubcommand(planResult.data.args, session, uiState, () => requestRender());
             session.lastStatus = result.status;
             session.lastOutputLines = result.outputLines;
             break;
@@ -866,10 +937,17 @@ export async function cmdTui(): Promise<void> {
     }
   } finally {
     if (useRawTui) {
+      if (scheduledRender) clearTimeout(scheduledRender);
       output.off("resize", onResize);
       input.setRawMode(false);
       output.write("\x1b[?25h\x1b[?1049l");
     }
-    rl.close();
+    rl?.close();
   }
 }
+
+export const __tuiTestUtils = {
+  applyMenuKeyEvent,
+  outputViewLines,
+  sanitizeOutputLine,
+};

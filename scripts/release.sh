@@ -675,6 +675,27 @@ update_homebrew_formula_file() {
   mv "$tmp_file" "$formula_file"
 }
 
+url_exists() {
+  local url="$1"
+  curl -fsSI "$url" >/dev/null 2>&1
+}
+
+verify_homebrew_release_assets() {
+  local binary_url="$1"
+  local source_url="$2"
+  local release_page="https://github.com/$GITHUB_ORG/$REPO_NAME_ALT/releases/tag/$VERSION"
+
+  if ! url_exists "$binary_url"; then
+    die "Missing Homebrew binary artifact: $binary_url
+Upload xint-rs-macos-arm64-$VERSION.tar.gz to $release_page before running Homebrew publish."
+  fi
+
+  if ! url_exists "$source_url"; then
+    die "Missing Homebrew source artifact: $source_url
+Ensure tag $VERSION exists and the source archive is available before Homebrew publish."
+  fi
+}
+
 publish_homebrew_tap() {
   local tap_path formula_xint formula_xint_rs
   local binary_url source_url binary_sha source_sha
@@ -717,6 +738,8 @@ publish_homebrew_tap() {
     binary_sha="<dry-run-binary-sha256>"
     source_sha="<dry-run-source-sha256>"
   else
+    log "Verifying required Homebrew release assets exist"
+    verify_homebrew_release_assets "$binary_url" "$source_url"
     log "Computing Homebrew SHA256 for release artifacts"
     binary_sha="$(sha256_for_url "$binary_url")" || die "Failed to download/hash binary artifact: $binary_url"
     source_sha="$(sha256_for_url "$source_url")" || die "Failed to download/hash source artifact: $source_url"
