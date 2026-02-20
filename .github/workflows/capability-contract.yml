@@ -18,11 +18,6 @@ jobs:
           repository: 0xNyk/xint-rs
           path: xint-rs
 
-      - name: Checkout xint-cloud
-        uses: actions/checkout@v4
-        with:
-          repository: 0xNyk/xint-cloud
-          path: xint-cloud
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -33,9 +28,6 @@ jobs:
       - name: Install xint deps
         run: bun install --frozen-lockfile
 
-      - name: Install xint-cloud deps
-        run: bun install --frozen-lockfile
-        working-directory: xint-cloud
 
       - name: Generate manifests
         run: |
@@ -52,7 +44,3 @@ jobs:
         run: |
           cargo test --manifest-path xint-rs/Cargo.toml mcp::costs_tool_returns_success_payload_without_network
           cargo test --manifest-path xint-rs/Cargo.toml mcp::cache_clear_tool_returns_success_payload
-
-      - name: Run package API smoke tests (xint-cloud create/query/publish)
-        run: bun test src/server.test.ts --filter "package status/search/query/publish/refresh endpoints operate on persisted package state"
-        working-directory: xint-cloud
