@@ -97,6 +97,44 @@ xint tr           # trends
 xint bm           # bookmarks
 ```
 
+### TUI Customization
+
+```bash
+# Built-in themes: classic | neon | minimal | ocean | amber
+XINT_TUI_THEME=ocean xint tui
+
+# Disable animated hero line
+XINT_TUI_HERO=0 xint tui
+
+# Disable icons in menu rows
+XINT_TUI_ICONS=0 xint tui
+
+# Force ASCII borders
+XINT_TUI_ASCII=1 xint tui
+
+# Optional theme token file
+XINT_TUI_THEME_FILE=./tui-theme.tokens.example.json xint tui
+```
+
+### TUI Customization
+
+```bash
+# Built-in themes: classic | neon | minimal | ocean | amber
+XINT_TUI_THEME=ocean xint tui
+
+# Disable animated hero line
+XINT_TUI_HERO=0 xint tui
+
+# Disable icons in menu rows
+XINT_TUI_ICONS=0 xint tui
+
+# Force ASCII borders
+XINT_TUI_ASCII=1 xint tui
+
+# Optional theme token file
+XINT_TUI_THEME_FILE=./tui-theme.tokens.example.json xint tui
+```
+
 ## Setup
 
 ### 1. X API Key
@@ -349,7 +387,7 @@ Runs an MCP server AI agents can connect to.
 xint mcp --sse --port=3000
 
 # Optional: require bearer auth (recommended if binding beyond loopback)
-XINT_MCP_AUTH_TOKEN=change-me xint mcp --sse --host=127.0.0.1
+XINT_MCP_AUTH_TOKEN=replace-with-long-random-token xint mcp --sse --host=127.0.0.1
 ```
 
 Security defaults:

@@ -6,9 +6,11 @@ set -euo pipefail
 
 REPO_NAME="xint"
 REPO_NAME_ALT="xint-rs"
+REPO_NAME_CLOUD="xint-cloud"
 GITHUB_ORG="0xNyk"
 
 PUBLISH_CLAWDHUB=true
+PUBLISH_CLAWDHUB_CLOUD=false
 PUBLISH_SKILLSH=false
 PUBLISH_HOMEBREW=true
 UPDATE_DOCS=false
@@ -32,6 +34,7 @@ fi
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_PATH_XINT="${REPO_PATH_XINT:-}"
 REPO_PATH_XINT_RS="${REPO_PATH_XINT_RS:-}"
+REPO_PATH_XINT_CLOUD="${REPO_PATH_XINT_CLOUD:-}"
 REPO_PATH_HOMEBREW="${REPO_PATH_HOMEBREW:-}"
 HOMEBREW_TAP_REPO="homebrew-xint"
 REPORT_DIR="${RELEASE_REPORT_DIR:-$ROOT_DIR/reports/releases}"
@@ -48,6 +51,7 @@ Options:
   --dry-run        Preview release actions without mutating repos
   --ai-skill       Enable both ClawdHub and skills.sh publishing
   --no-clawdhub    Disable ClawdHub publishing for this run
+  --clawdhub-cloud Enable ClawdHub publishing for xint-cloud (disabled by default)
   --skillsh        Enable skills.sh publishing
   --no-homebrew    Disable Homebrew tap formula update/publish
   --docs           Update README/changelog files when present
@@ -69,6 +73,9 @@ Environment variables:
   CHANGELOG_SECURITY
   TWEET_DRAFT
   RELEASE_REPORT_DIR
+  REPO_PATH_XINT
+  REPO_PATH_XINT_RS
+  REPO_PATH_XINT_CLOUD
   REPO_PATH_HOMEBREW
 USAGE
 }
@@ -115,6 +122,9 @@ resolve_repo_path() {
       ;;
     "$REPO_NAME_ALT")
       override="$REPO_PATH_XINT_RS"
+      ;;
+    "$REPO_NAME_CLOUD")
+      override="$REPO_PATH_XINT_CLOUD"
       ;;
   esac
 
@@ -665,6 +675,27 @@ update_homebrew_formula_file() {
   mv "$tmp_file" "$formula_file"
 }
 
+url_exists() {
+  local url="$1"
+  curl -fsSI "$url" >/dev/null 2>&1
+}
+
+verify_homebrew_release_assets() {
+  local binary_url="$1"
+  local source_url="$2"
+  local release_page="https://github.com/$GITHUB_ORG/$REPO_NAME_ALT/releases/tag/$VERSION"
+
+  if ! url_exists "$binary_url"; then
+    die "Missing Homebrew binary artifact: $binary_url
+Upload xint-rs-macos-arm64-$VERSION.tar.gz to $release_page before running Homebrew publish."
+  fi
+
+  if ! url_exists "$source_url"; then
+    die "Missing Homebrew source artifact: $source_url
+Ensure tag $VERSION exists and the source archive is available before Homebrew publish."
+  fi
+}
+
 publish_homebrew_tap() {
   local tap_path formula_xint formula_xint_rs
   local binary_url source_url binary_sha source_sha
@@ -707,6 +738,8 @@ publish_homebrew_tap() {
     binary_sha="<dry-run-binary-sha256>"
     source_sha="<dry-run-source-sha256>"
   else
+    log "Verifying required Homebrew release assets exist"
+    verify_homebrew_release_assets "$binary_url" "$source_url"
     log "Computing Homebrew SHA256 for release artifacts"
     binary_sha="$(sha256_for_url "$binary_url")" || die "Failed to download/hash binary artifact: $binary_url"
     source_sha="$(sha256_for_url "$source_url")" || die "Failed to download/hash source artifact: $source_url"
@@ -923,8 +956,10 @@ EOF
 generate_release_report() {
   local previous_tag_primary="$1"
   local previous_tag_alt="$2"
-  local release_url_primary="$3"
-  local release_url_alt="$4"
+  local previous_tag_cloud="$3"
+  local release_url_primary="$4"
+  local release_url_alt="$5"
+  local release_url_cloud="$6"
   local report_file
   report_file="$REPORT_DIR/$VERSION.md"
   GENERATED_REPORT_FILE=""
@@ -957,6 +992,9 @@ EOF
   if [[ -n "$REPO_NAME_ALT" ]]; then
     append_repo_release_section "$report_file" "$REPO_NAME_ALT" "$previous_tag_alt" "$release_url_alt"
   fi
+  if [[ -n "$REPO_NAME_CLOUD" ]]; then
+    append_repo_release_section "$report_file" "$REPO_NAME_CLOUD" "$previous_tag_cloud" "$release_url_cloud"
+  fi
 
   GENERATED_REPORT_FILE="$report_file"
   log "Release report generated: $report_file"
@@ -973,6 +1011,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     --no-clawdhub)
       PUBLISH_CLAWDHUB=false
+      ;;
+    --clawdhub-cloud)
+      PUBLISH_CLAWDHUB_CLOUD=true
       ;;
     --skillsh)
       PUBLISH_SKILLSH=true
@@ -1033,6 +1074,9 @@ repo_exists "$REPO_NAME" || die "Missing repo directory: $REPO_NAME"
 if [[ -n "$REPO_NAME_ALT" ]]; then
   repo_exists "$REPO_NAME_ALT" || die "Missing repo directory: $REPO_NAME_ALT"
 fi
+if [[ -n "$REPO_NAME_CLOUD" ]]; then
+  repo_exists "$REPO_NAME_CLOUD" || die "Missing repo directory: $REPO_NAME_CLOUD"
+fi
 
 if [[ -z "$VERSION" ]]; then
   VERSION="$(detect_next_version)"
@@ -1042,22 +1086,33 @@ log "Preparing release version: $VERSION"
 
 PREVIOUS_TAG_PRIMARY="$(find_previous_release_tag "$REPO_NAME" "$VERSION")"
 PREVIOUS_TAG_ALT=""
+PREVIOUS_TAG_CLOUD=""
 if [[ -n "$REPO_NAME_ALT" ]]; then
   PREVIOUS_TAG_ALT="$(find_previous_release_tag "$REPO_NAME_ALT" "$VERSION")"
+fi
+if [[ -n "$REPO_NAME_CLOUD" ]]; then
+  PREVIOUS_TAG_CLOUD="$(find_previous_release_tag "$REPO_NAME_CLOUD" "$VERSION")"
 fi
 
 preflight_repo "$REPO_NAME"
 if [[ -n "$REPO_NAME_ALT" ]]; then
   preflight_repo "$REPO_NAME_ALT"
 fi
+if [[ -n "$REPO_NAME_CLOUD" ]]; then
+  preflight_repo "$REPO_NAME_CLOUD"
+fi
 
 log "Bumping manifest versions"
 declare -a RELEASE_FILES_PRIMARY
 declare -a RELEASE_FILES_ALT
+declare -a RELEASE_FILES_CLOUD
 
 collect_release_files "$REPO_NAME" RELEASE_FILES_PRIMARY
 if [[ -n "$REPO_NAME_ALT" ]]; then
   collect_release_files "$REPO_NAME_ALT" RELEASE_FILES_ALT
+fi
+if [[ -n "$REPO_NAME_CLOUD" ]]; then
+  collect_release_files "$REPO_NAME_CLOUD" RELEASE_FILES_CLOUD
 fi
 
 log "Committing release manifests"
@@ -1065,11 +1120,17 @@ commit_repo "$REPO_NAME" "${RELEASE_FILES_PRIMARY[@]}"
 if [[ -n "$REPO_NAME_ALT" ]]; then
   commit_repo "$REPO_NAME_ALT" "${RELEASE_FILES_ALT[@]}"
 fi
+if [[ -n "$REPO_NAME_CLOUD" ]]; then
+  commit_repo "$REPO_NAME_CLOUD" "${RELEASE_FILES_CLOUD[@]}"
+fi
 
 log "Pushing release commits"
 push_repo "$REPO_NAME"
 if [[ -n "$REPO_NAME_ALT" ]]; then
   push_repo "$REPO_NAME_ALT"
+fi
+if [[ -n "$REPO_NAME_CLOUD" ]]; then
+  push_repo "$REPO_NAME_CLOUD"
 fi
 
 if [[ "$PUBLISH_CLAWDHUB" == "true" ]]; then
@@ -1078,6 +1139,9 @@ if [[ "$PUBLISH_CLAWDHUB" == "true" ]]; then
   if [[ -n "$REPO_NAME_ALT" ]]; then
     publish_clawdhub "$REPO_NAME_ALT"
   fi
+  if [[ -n "$REPO_NAME_CLOUD" && "$PUBLISH_CLAWDHUB_CLOUD" == "true" ]]; then
+    publish_clawdhub "$REPO_NAME_CLOUD"
+  fi
 fi
 
 if [[ "$PUBLISH_SKILLSH" == "true" ]]; then
@@ -1085,6 +1149,9 @@ if [[ "$PUBLISH_SKILLSH" == "true" ]]; then
   publish_skillsh "$REPO_NAME"
   if [[ -n "$REPO_NAME_ALT" ]]; then
     publish_skillsh "$REPO_NAME_ALT"
+  fi
+  if [[ -n "$REPO_NAME_CLOUD" ]]; then
+    publish_skillsh "$REPO_NAME_CLOUD"
   fi
 fi
 
@@ -1123,37 +1190,54 @@ create_github_release "$REPO_NAME" "$RELEASE_NOTES" "$USE_AUTO_NOTES"
 if [[ -n "$REPO_NAME_ALT" ]]; then
   create_github_release "$REPO_NAME_ALT" "$RELEASE_NOTES" "$USE_AUTO_NOTES"
 fi
+if [[ -n "$REPO_NAME_CLOUD" ]]; then
+  create_github_release "$REPO_NAME_CLOUD" "$RELEASE_NOTES" "$USE_AUTO_NOTES"
+fi
 
 log "Publishing Homebrew tap formulas"
 publish_homebrew_tap
 
 RELEASE_URL_PRIMARY="$(release_url_for_repo "$REPO_NAME")"
 RELEASE_URL_ALT=""
+RELEASE_URL_CLOUD=""
 if [[ -n "$REPO_NAME_ALT" ]]; then
   RELEASE_URL_ALT="$(release_url_for_repo "$REPO_NAME_ALT")"
+fi
+if [[ -n "$REPO_NAME_CLOUD" ]]; then
+  RELEASE_URL_CLOUD="$(release_url_for_repo "$REPO_NAME_CLOUD")"
 fi
 
 generate_release_report \
   "$PREVIOUS_TAG_PRIMARY" \
   "$PREVIOUS_TAG_ALT" \
+  "$PREVIOUS_TAG_CLOUD" \
   "$RELEASE_URL_PRIMARY" \
-  "$RELEASE_URL_ALT"
+  "$RELEASE_URL_ALT" \
+  "$RELEASE_URL_CLOUD"
 
 upload_release_report_asset "$REPO_NAME" "$GENERATED_REPORT_FILE"
 if [[ -n "$REPO_NAME_ALT" ]]; then
   upload_release_report_asset "$REPO_NAME_ALT" "$GENERATED_REPORT_FILE"
+fi
+if [[ -n "$REPO_NAME_CLOUD" ]]; then
+  upload_release_report_asset "$REPO_NAME_CLOUD" "$GENERATED_REPORT_FILE"
 fi
 
 embed_release_report_in_body "$REPO_NAME" "$GENERATED_REPORT_FILE"
 if [[ -n "$REPO_NAME_ALT" ]]; then
   embed_release_report_in_body "$REPO_NAME_ALT" "$GENERATED_REPORT_FILE"
 fi
+if [[ -n "$REPO_NAME_CLOUD" ]]; then
+  embed_release_report_in_body "$REPO_NAME_CLOUD" "$GENERATED_REPORT_FILE"
+fi
 
 if [[ -z "${TWEET_DRAFT:-}" ]]; then
   if [[ "$USE_AUTO_NOTES" == "true" ]]; then
     TWEET_DRAFT="xint $VERSION is available.
 
-See GitHub release notes for details."
+$RELEASE_URL_PRIMARY
+$RELEASE_URL_ALT
+$RELEASE_URL_CLOUD"
   else
     TWEET_DRAFT="xint $VERSION is available.
 
