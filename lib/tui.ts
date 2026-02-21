@@ -152,9 +152,16 @@ function iconForAction(key: string): string {
 }
 
 function buildTabs(uiState: UiState): string {
+  const icon = (tab: DashboardTab): string => {
+    if (process.env.XINT_TUI_ICONS === "0") return "";
+    if (tab === "commands") return "⌘ ";
+    if (tab === "output") return "▤ ";
+    return "? ";
+  };
+
   return (["commands", "output", "help"] as DashboardTab[])
     .map((tab, index) => {
-      const label = `${index + 1}:${tabLabel(tab)}`;
+      const label = `${index + 1}:${icon(tab)}${tabLabel(tab)}`;
       return tab === uiState.tab ? `‹${label}›` : `[${label}]`;
     })
     .join(" ");
@@ -345,6 +352,8 @@ function renderDoublePane(uiState: UiState, session: SessionState, columns: numb
   frame += `${theme.border}${border.v}${theme.reset}${padText(` xint dashboard ${tabs}`, Math.max(1, columns - 2))}${theme.border}${border.v}${theme.reset}\n`;
   frame += `${theme.border}${border.v}${theme.reset}${theme.accent}${padText(` ${tracker}`, Math.max(1, columns - 2))}${theme.reset}${theme.border}${border.v}${theme.reset}\n`;
   frame += `${theme.border}${border.lj}${border.h.repeat(leftBoxWidth - 2)}${border.rj} ${border.lj}${border.h.repeat(rightBoxWidth - 2)}${border.rj}${theme.reset}\n`;
+  frame += `${theme.border}${border.v}${theme.reset}${theme.accent}${padText(" Commands", leftInner)}${theme.reset}${theme.border}${border.v}${theme.reset} ${theme.border}${border.v}${theme.reset}${theme.accent}${padText(` ${tabLabel(uiState.tab)}`, rightInner)}${theme.reset}${theme.border}${border.v}${theme.reset}\n`;
+  frame += `${theme.border}${border.lj}${border.h.repeat(leftBoxWidth - 2)}${border.rj} ${border.lj}${border.h.repeat(rightBoxWidth - 2)}${border.rj}${theme.reset}\n`;
 
   for (let row = 0; row < totalRows; row += 1) {
     const leftRaw = leftLines[row] ?? "";
@@ -386,6 +395,8 @@ function renderSinglePane(uiState: UiState, session: SessionState, columns: numb
   }
   frame += `${theme.border}${border.v}${theme.reset}${padText(` xint dashboard ${tabs}`, width)}${theme.border}${border.v}${theme.reset}\n`;
   frame += `${theme.border}${border.v}${theme.reset}${theme.accent}${padText(` ${tracker}`, width)}${theme.reset}${theme.border}${border.v}${theme.reset}\n`;
+  frame += `${theme.border}${border.lj}${border.h.repeat(width)}${border.rj}${theme.reset}\n`;
+  frame += `${theme.border}${border.v}${theme.reset}${theme.accent}${padText(` ${tabLabel(uiState.tab)}`, width)}${theme.reset}${theme.border}${border.v}${theme.reset}\n`;
   frame += `${theme.border}${border.lj}${border.h.repeat(width)}${border.rj}${theme.reset}\n`;
 
   for (const line of lines.slice(-totalRows)) {
