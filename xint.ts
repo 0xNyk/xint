@@ -668,25 +668,30 @@ async function cmdArticle() {
   try {
     let article;
     
-    // Check if it's an X tweet URL - extract linked article
+    // Check if it's an X tweet URL - extract linked article or inline X Article
     if (extractTweetId(url)) {
       console.log("🔍 Fetching tweet to extract linked article...");
       const { fetchTweetForArticle } = await import("./lib/article");
-      const { tweet, articleUrl } = await fetchTweetForArticle(url);
-      
-      if (!articleUrl) {
+      const { tweet, articleUrl, inlineArticle } = await fetchTweetForArticle(url);
+
+      if (inlineArticle) {
+        console.log(`📄 Found X Article: ${inlineArticle.title}\n`);
+        article = inlineArticle;
+      } else if (articleUrl) {
+        console.log(`📄 Found link: ${articleUrl}\n`);
+        url = articleUrl;
+      } else {
         console.log("📝 No external link found in tweet.");
         console.log(`   Tweet: ${tweet.text?.slice(0, 200)}...`);
         console.log(`   URL: ${tweet.tweet_url}`);
         process.exit(0);
       }
-      
-      console.log(`📄 Found link: ${articleUrl}\n`);
-      url = articleUrl;
     }
 
-    // Fetch the article
-    article = await fetchArticle(url, { full, model });
+    // Fetch the article if not already resolved from inline X Article
+    if (!article) {
+      article = await fetchArticle(url, { full, model });
+    }
 
     // If AI prompt provided, analyze the article
     if (aiPrompt) {

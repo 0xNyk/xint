@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { pickArticleUrlFromTweet, resolveArticleTimeoutMs } from "./article";
+import { pickArticleUrlFromTweet, resolveArticleTimeoutMs, reconstructArticleContent } from "./article";
 
 describe("article url extraction", () => {
   test("prefers external URL from parsed tweet urls", () => {
@@ -29,6 +29,32 @@ describe("article url extraction", () => {
       },
     };
     expect(pickArticleUrlFromTweet(tweet)).toBe("https://news.ycombinator.com/item?id=1");
+  });
+});
+
+describe("reconstructArticleContent", () => {
+  test("returns plain_text when no code blocks", () => {
+    const result = reconstructArticleContent({
+      title: "Test",
+      plain_text: "Hello world article content.",
+    });
+    expect(result).toBe("Hello world article content.");
+  });
+
+  test("appends code blocks when present", () => {
+    const result = reconstructArticleContent({
+      title: "Test",
+      plain_text: "Some article text.",
+      entities: {
+        code: [
+          { language: "typescript", code: "const x = 1;", content: "```typescript\nconst x = 1;\n```" },
+        ],
+      },
+    });
+    expect(result).toContain("Some article text.");
+    expect(result).toContain("Code examples from article:");
+    expect(result).toContain("```typescript");
+    expect(result).toContain("const x = 1;");
   });
 });
 

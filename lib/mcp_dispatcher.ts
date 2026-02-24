@@ -2,7 +2,8 @@ import * as api from "./api";
 import * as cache from "./cache";
 import { checkBudget, getCostSummary, trackCost } from "./costs";
 import { fetchTrends, resolveWoeid } from "./trends";
-import { fetchArticle } from "./article";
+import { fetchArticle, fetchTweetForArticle } from "./article";
+import { extractTweetId } from "./media";
 import { actionInfo, actionSuccess, type ActionExecutionResult } from "./action_result";
 
 export type ToolExecutionResult = ActionExecutionResult<unknown>;
@@ -61,7 +62,23 @@ export function createMcpToolHandlers(deps: MCPDispatcherDeps): Record<string, M
     },
 
     async xint_article(args) {
-      const article = await fetchArticle(String(args.url || ""), { full: args.full !== false });
+      let articleUrl = String(args.url || "");
+      const full = args.full !== false;
+
+      // Check if it's a tweet URL — may contain an inline X Article
+      if (extractTweetId(articleUrl)) {
+        const ctx = await fetchTweetForArticle(articleUrl);
+        if (ctx.inlineArticle) {
+          return actionSuccess("Article fetched from X Article data.", ctx.inlineArticle);
+        }
+        if (ctx.articleUrl) {
+          articleUrl = ctx.articleUrl;
+        } else {
+          throw new Error("No article link found in tweet");
+        }
+      }
+
+      const article = await fetchArticle(articleUrl, { full });
       return actionSuccess("Article fetch completed.", article);
     },
 
