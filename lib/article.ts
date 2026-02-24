@@ -11,6 +11,7 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import { extractTweetId } from "./media";
+import type { TweetArticle } from "./api";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -240,7 +241,11 @@ function parseArticleJson(raw: string, url: string, domain: string): Article {
 /**
  * Extract tweet ID from X URL and fetch the tweet to get linked articles.
  */
-export async function fetchTweetForArticle(tweetUrl: string): Promise<{ tweet: any; articleUrl: string | null }> {
+export async function fetchTweetForArticle(tweetUrl: string): Promise<{
+  tweet: any;
+  articleUrl: string | null;
+  inlineArticle?: Article;
+}> {
   const tweetId = extractTweetId(tweetUrl);
   if (!tweetId) {
     throw new Error(`Invalid X tweet URL: ${tweetUrl}`);
@@ -254,7 +259,79 @@ export async function fetchTweetForArticle(tweetUrl: string): Promise<{ tweet: a
     throw new Error(`Tweet not found: ${tweetId}`);
   }
 
+  // If tweet has inline article data from X API, build Article directly
+  if (tweet.article?.plain_text) {
+    const content = reconstructArticleContent(tweet.article);
+    const words = content.split(/\s+/).filter(Boolean).length;
+    return {
+      tweet,
+      articleUrl: null,
+      inlineArticle: {
+        url: tweetUrl,
+        title: tweet.article.title || "X Article",
+        description: tweet.article.preview_text || "",
+        content,
+        author: tweet.username || tweet.name || "",
+        published: tweet.created_at || "",
+        domain: "x.com",
+        ttr: Math.max(1, Math.ceil(words / 238)),
+        wordCount: words,
+      },
+    };
+  }
+
   return { tweet, articleUrl: pickArticleUrlFromTweet(tweet) };
+}
+
+export function reconstructArticleContent(article: TweetArticle): string {
+  let content = article.plain_text;
+  const codeBlocks = article.entities?.code;
+  if (codeBlocks?.length) {
+    content += "\n\n---\n\nCode examples from article:\n";
+    for (const block of codeBlocks) {
+      content += `\n${block.content}\n`;
+    }
+  }
+  return content;
+}
+
+export function buildArticleFallbackFromTweet(input: {
+  sourceUrl: string;
+  tweet: any;
+  articleTitle?: string;
+  articleDescription?: string;
+  reason: string;
+}): Article {
+  const title = input.articleTitle || "X Article Link";
+  const description = input.articleDescription || input.reason;
+  const tweetText = String(input.tweet?.text || "").trim();
+  const content = [
+    "Unable to fetch full article body in this runtime.",
+    input.reason,
+    tweetText ? `Tweet text: ${tweetText}` : "",
+    `Source URL: ${input.sourceUrl}`,
+  ].filter(Boolean).join("\n\n");
+
+  const words = content.split(/\s+/).filter(Boolean).length;
+  const domain = (() => {
+    try {
+      return new URL(input.sourceUrl).hostname;
+    } catch {
+      return "x.com";
+    }
+  })();
+
+  return {
+    url: input.sourceUrl,
+    title,
+    description,
+    content,
+    author: "",
+    published: "",
+    domain,
+    ttr: Math.max(1, Math.ceil(words / 238)),
+    wordCount: words,
+  };
 }
 
 function normalizeCandidateUrl(value: string | undefined): string | null {
@@ -268,7 +345,7 @@ function normalizeCandidateUrl(value: string | undefined): string | null {
   }
 }
 
-function isXArticleUrl(url: string): boolean {
+export function isXArticleUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
     return /(^|\.)x\.com$/i.test(parsed.hostname) && parsed.pathname.startsWith("/i/article/");

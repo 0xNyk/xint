@@ -44,6 +44,21 @@ export interface UrlEntity {
   images?: string[];    // preview image URLs from X API
 }
 
+export interface TweetArticle {
+  title: string;
+  plain_text: string;
+  preview_text?: string;
+  cover_media?: string;
+  media_entities?: string[];
+  entities?: {
+    code?: Array<{
+      language: string;
+      code: string;
+      content: string;
+    }>;
+  };
+}
+
 export interface Tweet {
   id: string;
   text: string;
@@ -64,6 +79,7 @@ export interface Tweet {
   mentions: string[];
   hashtags: string[];
   tweet_url: string;
+  article?: TweetArticle;
 }
 
 interface RawResponse {
@@ -118,12 +134,22 @@ export function parseTweets(raw: RawResponse): Tweet[] {
         .map((h: any) => h.tag)
         .filter(Boolean),
       tweet_url: `https://x.com/${u.username || "?"}/status/${t.id}`,
+      ...(t.article?.plain_text && {
+        article: {
+          title: t.article.title || "",
+          plain_text: t.article.plain_text,
+          preview_text: t.article.preview_text || "",
+          cover_media: t.article.cover_media || "",
+          media_entities: t.article.media_entities || [],
+          entities: t.article.entities || {},
+        },
+      }),
     };
   });
 }
 
 export const FIELDS =
-  "tweet.fields=created_at,public_metrics,author_id,conversation_id,entities&expansions=author_id&user.fields=username,name,public_metrics";
+  "tweet.fields=created_at,public_metrics,author_id,conversation_id,entities,article&expansions=author_id&user.fields=username,name,public_metrics";
 
 /**
  * Parse a "since" value into an ISO 8601 timestamp.
