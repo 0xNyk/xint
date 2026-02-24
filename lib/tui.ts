@@ -1,5 +1,5 @@
 import { join } from "path";
-import { readFileSync } from "fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from "fs";
 import { createInterface } from "readline/promises";
 import { emitKeypressEvents } from "readline";
 import { stdin as input, stdout as output } from "process";
@@ -11,6 +11,56 @@ import {
 } from "./actions";
 import { buildTuiExecutionPlan } from "./tui_adapter";
 
+const HISTORY_MAX = 50;
+const HISTORY_FILE = join(import.meta.dir, "..", "data", "tui-history.json");
+
+type HistoryStore = Record<string, string[]>;
+
+function loadHistory(): HistoryStore {
+  try {
+    if (!existsSync(HISTORY_FILE)) return {};
+    const raw = readFileSync(HISTORY_FILE, "utf8");
+    const parsed = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) return {};
+    const store: HistoryStore = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (Array.isArray(value)) {
+        store[key] = value.filter((v): v is string => typeof v === "string").slice(-HISTORY_MAX);
+      }
+    }
+    return store;
+  } catch {
+    return {};
+  }
+}
+
+function saveHistory(store: HistoryStore): void {
+  try {
+    const dir = join(import.meta.dir, "..", "data");
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    writeFileSync(HISTORY_FILE, JSON.stringify(store, null, 2), "utf8");
+  } catch {
+    // best-effort persistence — don't crash TUI on write failure
+  }
+}
+
+function pushHistory(store: HistoryStore, category: string, value: string): void {
+  const trimmed = value.trim();
+  if (!trimmed) return;
+  if (!store[category]) store[category] = [];
+  const entries = store[category];
+  const existing = entries.indexOf(trimmed);
+  if (existing !== -1) entries.splice(existing, 1);
+  entries.push(trimmed);
+  if (entries.length > HISTORY_MAX) {
+    store[category] = entries.slice(-HISTORY_MAX);
+  }
+}
+
+function historyForCategory(store: HistoryStore, category: string): string[] {
+  return store[category] ?? [];
+}
+
 type SessionState = {
   lastSearch?: string;
   lastLocation?: string;
@@ -19,6 +69,7 @@ type SessionState = {
   lastArticleUrl?: string;
   lastCommand?: string;
   lastStatus?: string;
+  lastError?: string;
   lastStdoutLines: string[];
   lastStderrLines: string[];
   lastOutputLines: string[];
@@ -32,7 +83,10 @@ type Theme = {
   reset: string;
 };
 
+type LayoutPreset = "full" | "compact" | "focus";
 type DashboardTab = "commands" | "output" | "help";
+
+type FocusPane = "left" | "right";
 
 type UiState = {
   activeIndex: number;
@@ -40,14 +94,17 @@ type UiState = {
   outputOffset: number;
   outputSearch: string;
   showStderr: boolean;
+  focusedPane: FocusPane;
   inlinePromptLabel?: string;
   inlinePromptValue?: string;
+  historyCategory?: string;
+  historyCursor: number; // -1 = editing new entry, 0..N = browsing history from newest
+  historyDraft?: string; // the value typed before browsing history
 };
 
 type UiPhase = "IDLE" | "INPUT" | "RUNNING" | "DONE" | "ERROR";
 type KeypressLike = { name?: string; ctrl?: boolean };
 type RunEvent =
-  | { type: "line"; line: string }
   | { type: "tick"; spinner: string }
   | { type: "exit"; code: number };
 type BorderChars = {
@@ -72,24 +129,65 @@ const THEMES: Record<string, Theme> = {
   amber: { accent: "\x1b[1;33m", border: "\x1b[38;5;214m", muted: "\x1b[38;5;244m", hero: "\x1b[1;220m", reset: "\x1b[0m" },
 };
 
-const HELP_LINES = [
-  "Hotkeys",
-  "  Up/Down: Move selection",
-  "  Enter: Run selected command",
-  "  Tab: Switch tabs",
-  "  F: Output search (filter)",
-  "  E: Toggle stderr stream",
-  "  PgUp/PgDn: Scroll output",
-  "  /: Command palette",
-  "  ?: Open Help tab",
-  "  q or Esc: Exit",
-];
+function buildContextHelp(phase: UiPhase, tab: DashboardTab, layout: LayoutPreset): string[] {
+  const lines: string[] = ["Help"];
+  lines.push("");
+
+  if (phase === "INPUT") {
+    lines.push("Prompt mode:");
+    lines.push("  Enter     Submit value");
+    lines.push("  Esc       Cancel prompt");
+    lines.push("  Up/Down   Browse history");
+    lines.push("  Backspace Delete character");
+    lines.push("");
+    lines.push("History entries are saved per input type.");
+  } else if (phase === "RUNNING") {
+    lines.push("Command running:");
+    lines.push("  PgUp/PgDn  Scroll output");
+    lines.push("  e          Toggle stdout/stderr");
+    lines.push("");
+    lines.push("Output streams update live as the command runs.");
+  } else {
+    // IDLE, DONE, ERROR
+    lines.push("Navigation:");
+    lines.push("  Up/Down    Move selection");
+    lines.push("  Enter      Run selected command");
+    lines.push("  Tab        Cycle tabs (Commands > Output > Help)");
+    if (layout === "full") {
+      lines.push("  h/l        Switch left/right pane focus");
+    }
+    lines.push("  /          Command palette (fuzzy search)");
+    lines.push("  q or Esc   Exit");
+    lines.push("");
+    lines.push("Output controls:");
+    lines.push("  PgUp/PgDn  Scroll output");
+    lines.push("  f          Filter output text");
+    lines.push("  e          Toggle stdout/stderr stream");
+    lines.push("  1/2/3      Jump to Commands/Output/Help tab");
+  }
+
+  lines.push("");
+  lines.push("Layout presets (XINT_TUI_LAYOUT env var):");
+  lines.push(`  full     Dual-pane with hero and tracker${layout === "full" ? " (active)" : ""}`);
+  lines.push(`  compact  Single-pane, no hero or tracker${layout === "compact" ? " (active)" : ""}`);
+  lines.push(`  focus    Output-only, commands via palette${layout === "focus" ? " (active)" : ""}`);
+
+  return lines;
+}
+
+let cachedTheme: Theme | null = null;
+let cachedThemeAt = 0;
+const THEME_CACHE_TTL = 5000; // re-read theme file at most every 5s
 
 function activeTheme(): Theme {
+  const now = Date.now();
+  if (cachedTheme && now - cachedThemeAt < THEME_CACHE_TTL) return cachedTheme;
   const requested = (process.env.XINT_TUI_THEME || "classic").toLowerCase();
   const base = THEMES[requested] ?? THEMES.classic;
   const fromFile = loadThemeFromFile();
-  return { ...base, ...fromFile };
+  cachedTheme = { ...base, ...fromFile };
+  cachedThemeAt = now;
+  return cachedTheme;
 }
 
 function loadThemeFromFile(): Partial<Theme> {
@@ -108,7 +206,14 @@ function loadThemeFromFile(): Partial<Theme> {
   }
 }
 
+function activeLayout(): LayoutPreset {
+  const raw = (process.env.XINT_TUI_LAYOUT || "full").toLowerCase();
+  if (raw === "compact" || raw === "focus") return raw;
+  return "full";
+}
+
 function isHeroEnabled(): boolean {
+  if (activeLayout() !== "full") return false;
   return process.env.XINT_TUI_HERO !== "0";
 }
 
@@ -167,7 +272,12 @@ function buildTabs(uiState: UiState): string {
     .join(" ");
 }
 
+function isTrackerEnabled(): boolean {
+  return activeLayout() === "full";
+}
+
 function buildHeaderTracker(uiState: UiState, width: number): string {
+  if (!isTrackerEnabled()) return "";
   const railWidth = Math.max(8, Math.min(18, width));
   const cursorBasis = uiState.inlinePromptLabel
     ? (uiState.inlinePromptValue ?? "").length
@@ -178,13 +288,16 @@ function buildHeaderTracker(uiState: UiState, width: number): string {
   return `focus ${left}●${right}`;
 }
 
+const SPINNER_FRAMES = ["|", "/", "-", "\\"];
+const RE_ANSI_CSI = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
+const RE_ANSI_OSC = /\x1b\][^\x07]*(\x07|\x1b\\)/g;
+const RE_CONTROL = /[\x00-\x08\x0b-\x1f\x7f]/g;
+
 function sanitizeOutputLine(line: string): string {
-  const ansiCsi = /\x1b\[[0-9;?]*[ -/]*[@-~]/g;
-  const ansiOsc = /\x1b\][^\x07]*(\x07|\x1b\\)/g;
   return line
-    .replace(ansiOsc, "")
-    .replace(ansiCsi, "")
-    .replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
+    .replace(RE_ANSI_OSC, "")
+    .replace(RE_ANSI_CSI, "")
+    .replace(RE_CONTROL, "");
 }
 
 function matchPalette(query: string): InteractiveAction | null {
@@ -246,6 +359,23 @@ function resolveUiPhase(session: SessionState, uiState: UiState): UiPhase {
   return "IDLE";
 }
 
+function buildContextualFooter(phase: UiPhase, uiState: UiState): string {
+  if (phase === "INPUT") {
+    return " Enter Submit • Esc Cancel • ↑↓ History • Backspace Delete ";
+  }
+  if (phase === "RUNNING") {
+    return " PgUp/PgDn Scroll • e Stream • f Filter • Waiting for command... ";
+  }
+  if (phase === "ERROR" || phase === "DONE") {
+    return " ↑↓ Move • Enter Run • Tab Views • f Filter • e Stream • / Palette • q Quit ";
+  }
+  // IDLE
+  if (uiState.focusedPane === "right") {
+    return " h Left pane • PgUp/PgDn Scroll • f Filter • e Stream • Tab Views • q Quit ";
+  }
+  return " ↑↓ Move • l Right pane • Enter Run • Tab Views • / Palette • ? Help • q Quit ";
+}
+
 function phaseBadge(phase: UiPhase): string {
   if (phase === "RUNNING") {
     const frames = ["|", "/", "-", "\\"];
@@ -258,7 +388,22 @@ function phaseBadge(phase: UiPhase): string {
   return `[${phase}]`;
 }
 
+const WELCOME_LINES = [
+  "Welcome to xint intelligence console",
+  "",
+  "Quick start:",
+  "  1 or Enter  Search tweets by keyword",
+  "  2           View trending topics",
+  "  3           Inspect a user profile",
+  "  4           Expand a tweet thread",
+  "  5           Fetch article content",
+  "  /           Open command palette",
+  "",
+  "Use Up/Down to navigate, Tab to switch panes.",
+];
+
 function outputViewLines(session: SessionState, uiState: UiState, viewport: number): string[] {
+  const phase = resolveUiPhase(session, uiState);
   const source = uiState.showStderr ? session.lastStderrLines : session.lastStdoutLines;
   const streamName = uiState.showStderr ? "stderr" : "stdout";
   const q = uiState.outputSearch.trim().toLowerCase();
@@ -273,17 +418,38 @@ function outputViewLines(session: SessionState, uiState: UiState, viewport: numb
   const end = Math.max(start, Math.min(filtered.length, start + visible));
   const windowLines = filtered.slice(start, end);
 
+  // Welcome state: no output yet and idle
+  if (phase === "IDLE" && session.lastOutputLines.length === 0 && !session.lastCommand) {
+    const lines: string[] = [...WELCOME_LINES];
+    if (uiState.inlinePromptLabel) {
+      lines.push("");
+      lines.push(uiState.inlinePromptLabel);
+      lines.push(`> ${(uiState.inlinePromptValue ?? "")}█`);
+    }
+    return lines;
+  }
+
   const lines: string[] = [
     "Last run",
     "",
-    `phase: ${phaseBadge(resolveUiPhase(session, uiState))}`,
+    `phase: ${phaseBadge(phase)}`,
     `command: ${session.lastCommand ?? "-"}`,
     `status: ${session.lastStatus ?? "-"}`,
     `stream: ${streamName} (${source.length}) | stdout=${session.lastStdoutLines.length} stderr=${session.lastStderrLines.length}`,
     `filter: ${uiState.outputSearch || "(none)"}`,
     "",
-    "output:",
   ];
+
+  // Error state: show last error prominently
+  if (phase === "ERROR" && session.lastError) {
+    lines.push("!! ERROR !!");
+    lines.push("");
+    lines.push(session.lastError);
+    lines.push("");
+    lines.push("output:");
+  } else {
+    lines.push("output:");
+  }
 
   if (uiState.inlinePromptLabel) {
     lines.push("");
@@ -309,7 +475,7 @@ function outputViewLines(session: SessionState, uiState: UiState, viewport: numb
 
 function buildTabLines(session: SessionState, uiState: UiState, viewport: number): string[] {
   if (uiState.tab === "help") {
-    return ["Help", "", ...HELP_LINES];
+    return buildContextHelp(resolveUiPhase(session, uiState), uiState.tab, activeLayout());
   }
   if (uiState.tab === "commands") {
     return buildCommandDrawer(uiState.activeIndex);
@@ -344,16 +510,20 @@ function renderDoublePane(uiState: UiState, session: SessionState, columns: numb
   const tabs = buildTabs(uiState);
   const tracker = buildHeaderTracker(uiState, 16);
 
-  let frame = "\x1b[2J\x1b[H";
-  frame += `${theme.border}${border.tl}${border.h.repeat(Math.max(1, columns - 2))}${border.tr}${theme.reset}\n`;
+  let frame = `${theme.border}${border.tl}${border.h.repeat(Math.max(1, columns - 2))}${border.tr}${theme.reset}\n`;
   if (isHeroEnabled()) {
     frame += `${theme.border}${border.v}${theme.reset}${theme.hero}${buildHeroLine(uiState, session, Math.max(1, columns - 2))}${theme.reset}${theme.border}${border.v}${theme.reset}\n`;
   }
   frame += `${theme.border}${border.v}${theme.reset}${padText(` xint dashboard ${tabs}`, Math.max(1, columns - 2))}${theme.border}${border.v}${theme.reset}\n`;
   frame += `${theme.border}${border.v}${theme.reset}${theme.accent}${padText(` ${tracker}`, Math.max(1, columns - 2))}${theme.reset}${theme.border}${border.v}${theme.reset}\n`;
-  frame += `${theme.border}${border.lj}${border.h.repeat(leftBoxWidth - 2)}${border.rj} ${border.lj}${border.h.repeat(rightBoxWidth - 2)}${border.rj}${theme.reset}\n`;
-  frame += `${theme.border}${border.v}${theme.reset}${theme.accent}${padText(" Commands", leftInner)}${theme.reset}${theme.border}${border.v}${theme.reset} ${theme.border}${border.v}${theme.reset}${theme.accent}${padText(` ${tabLabel(uiState.tab)}`, rightInner)}${theme.reset}${theme.border}${border.v}${theme.reset}\n`;
-  frame += `${theme.border}${border.lj}${border.h.repeat(leftBoxWidth - 2)}${border.rj} ${border.lj}${border.h.repeat(rightBoxWidth - 2)}${border.rj}${theme.reset}\n`;
+  const leftHeaderColor = uiState.focusedPane === "left" ? theme.accent : theme.muted;
+  const rightHeaderColor = uiState.focusedPane === "right" ? theme.accent : theme.muted;
+  const leftBorderColor = uiState.focusedPane === "left" ? theme.accent : theme.border;
+  const rightBorderColor = uiState.focusedPane === "right" ? theme.accent : theme.border;
+
+  frame += `${leftBorderColor}${border.lj}${border.h.repeat(leftBoxWidth - 2)}${border.rj}${theme.reset} ${rightBorderColor}${border.lj}${border.h.repeat(rightBoxWidth - 2)}${border.rj}${theme.reset}\n`;
+  frame += `${leftBorderColor}${border.v}${theme.reset}${leftHeaderColor}${padText(" Commands", leftInner)}${theme.reset}${leftBorderColor}${border.v}${theme.reset} ${rightBorderColor}${border.v}${theme.reset}${rightHeaderColor}${padText(` ${tabLabel(uiState.tab)}`, rightInner)}${theme.reset}${rightBorderColor}${border.v}${theme.reset}\n`;
+  frame += `${leftBorderColor}${border.lj}${border.h.repeat(leftBoxWidth - 2)}${border.rj}${theme.reset} ${rightBorderColor}${border.lj}${border.h.repeat(rightBoxWidth - 2)}${border.rj}${theme.reset}\n`;
 
   for (let row = 0; row < totalRows; row += 1) {
     const leftRaw = leftLines[row] ?? "";
@@ -364,15 +534,15 @@ function renderDoublePane(uiState: UiState, session: SessionState, columns: numb
       ? `${theme.accent}${leftText}${theme.reset}`
       : `${theme.muted}${leftText}${theme.reset}`;
 
-    frame += `${theme.border}${border.v}${theme.reset}${leftSegment}${theme.border}${border.v}${theme.reset} ${theme.border}${border.v}${theme.reset}${theme.muted}${rightText}${theme.reset}${theme.border}${border.v}${theme.reset}\n`;
+    frame += `${leftBorderColor}${border.v}${theme.reset}${leftSegment}${leftBorderColor}${border.v}${theme.reset} ${rightBorderColor}${border.v}${theme.reset}${theme.muted}${rightText}${theme.reset}${rightBorderColor}${border.v}${theme.reset}\n`;
   }
 
-  frame += `${theme.border}${border.lj}${border.h.repeat(leftBoxWidth - 2)}${border.rj} ${border.lj}${border.h.repeat(rightBoxWidth - 2)}${border.rj}${theme.reset}\n`;
+  frame += `${leftBorderColor}${border.lj}${border.h.repeat(leftBoxWidth - 2)}${border.rj}${theme.reset} ${rightBorderColor}${border.lj}${border.h.repeat(rightBoxWidth - 2)}${border.rj}${theme.reset}\n`;
   frame += `${theme.border}${border.v}${theme.reset}${theme.accent}${buildStatusLine(session, uiState, Math.max(1, columns - 2))}${theme.reset}${theme.border}${border.v}${theme.reset}\n`;
-  const footer = " ↑↓ Move • Enter Run • Tab Views • f Filter • e Stream • / Palette • PgUp/PgDn Scroll • q Quit ";
+  const footer = buildContextualFooter(resolveUiPhase(session, uiState), uiState);
   frame += `${theme.border}${border.v}${theme.reset}${padText(footer, Math.max(1, columns - 2))}${theme.border}${border.v}${theme.reset}\n`;
-  frame += `${theme.border}${border.bl}${border.h.repeat(Math.max(1, columns - 2))}${border.br}${theme.reset}\n`;
-  output.write(frame);
+  frame += `${theme.border}${border.bl}${border.h.repeat(Math.max(1, columns - 2))}${border.br}${theme.reset}`;
+  writeFrame(frame.split("\n"));
 }
 
 function renderSinglePane(uiState: UiState, session: SessionState, columns: number, rows: number): void {
@@ -388,8 +558,7 @@ function renderSinglePane(uiState: UiState, session: SessionState, columns: numb
       ? [...buildMenuLines(uiState.activeIndex), "", ...buildCommandDrawer(uiState.activeIndex)]
       : buildTabLines(session, uiState, totalRows * 2);
 
-  let frame = "\x1b[2J\x1b[H";
-  frame += `${theme.border}${border.tl}${border.h.repeat(width)}${border.tr}${theme.reset}\n`;
+  let frame = `${theme.border}${border.tl}${border.h.repeat(width)}${border.tr}${theme.reset}\n`;
   if (isHeroEnabled()) {
     frame += `${theme.border}${border.v}${theme.reset}${theme.hero}${buildHeroLine(uiState, session, width)}${theme.reset}${theme.border}${border.v}${theme.reset}\n`;
   }
@@ -413,19 +582,86 @@ function renderSinglePane(uiState: UiState, session: SessionState, columns: numb
     frame += `${theme.border}${border.v}${theme.reset}${" ".repeat(width)}${theme.border}${border.v}${theme.reset}\n`;
   }
 
-  const footer = " Enter Run • Tab Views • f Filter • e Stream • / Palette • PgUp/PgDn • q Quit ";
+  const footer = buildContextualFooter(resolveUiPhase(session, uiState), uiState);
   frame += `${theme.border}${border.lj}${border.h.repeat(width)}${border.rj}${theme.reset}\n`;
   frame += `${theme.border}${border.v}${theme.reset}${theme.accent}${buildStatusLine(session, uiState, width)}${theme.reset}${theme.border}${border.v}${theme.reset}\n`;
   frame += `${theme.border}${border.lj}${border.h.repeat(width)}${border.rj}${theme.reset}\n`;
   frame += `${theme.border}${border.v}${theme.reset}${padText(footer, width)}${theme.border}${border.v}${theme.reset}\n`;
-  frame += `${theme.border}${border.bl}${border.h.repeat(width)}${border.br}${theme.reset}\n`;
-  output.write(frame);
+  frame += `${theme.border}${border.bl}${border.h.repeat(width)}${border.br}${theme.reset}`;
+  writeFrame(frame.split("\n"));
+}
+
+function renderFocusPane(uiState: UiState, session: SessionState, columns: number, rows: number): void {
+  const theme = activeTheme();
+  const border = activeBorderChars();
+  const width = Math.max(30, columns - 2);
+  const totalRows = Math.max(10, rows - 5);
+
+  const lines = outputViewLines(session, uiState, totalRows * 2);
+
+  let frame = `${theme.border}${border.tl}${border.h.repeat(width)}${border.tr}${theme.reset}\n`;
+  frame += `${theme.border}${border.v}${theme.reset}${theme.accent}${padText(" xint [focus] | / Palette | q Quit", width)}${theme.reset}${theme.border}${border.v}${theme.reset}\n`;
+  frame += `${theme.border}${border.lj}${border.h.repeat(width)}${border.rj}${theme.reset}\n`;
+
+  for (const line of lines.slice(-totalRows)) {
+    const row = padText(line, width);
+    frame += `${theme.border}${border.v}${theme.reset}${theme.muted}${row}${theme.reset}${theme.border}${border.v}${theme.reset}\n`;
+  }
+
+  const rendered = Math.min(totalRows, lines.length);
+  for (let i = rendered; i < totalRows; i += 1) {
+    frame += `${theme.border}${border.v}${theme.reset}${" ".repeat(width)}${theme.border}${border.v}${theme.reset}\n`;
+  }
+
+  frame += `${theme.border}${border.lj}${border.h.repeat(width)}${border.rj}${theme.reset}\n`;
+  frame += `${theme.border}${border.v}${theme.reset}${theme.accent}${buildStatusLine(session, uiState, width)}${theme.reset}${theme.border}${border.v}${theme.reset}\n`;
+  frame += `${theme.border}${border.bl}${border.h.repeat(width)}${border.br}${theme.reset}`;
+  writeFrame(frame.split("\n"));
+}
+
+let previousFrameLines: string[] = [];
+
+function writeFrame(lines: string[]): void {
+  // Synchronized Output protocol: buffer the entire frame atomically
+  let buf = "\x1b[?2026h"; // begin synchronized update
+
+  if (previousFrameLines.length === 0) {
+    // First frame: full clear + write
+    buf += "\x1b[2J\x1b[H";
+    buf += lines.join("\n") + "\n";
+  } else {
+    // Dirty-region rendering: only rewrite changed lines
+    const maxLines = Math.max(previousFrameLines.length, lines.length);
+    for (let i = 0; i < maxLines; i++) {
+      const prev = previousFrameLines[i] ?? "";
+      const next = lines[i] ?? "";
+      if (prev !== next) {
+        buf += `\x1b[${i + 1};1H`; // move cursor to row i+1, col 1
+        buf += next;
+        buf += "\x1b[K"; // always clear to EOL — byte-length is unreliable with embedded ANSI
+      }
+    }
+    // If previous frame had more lines, clear them
+    if (previousFrameLines.length > lines.length) {
+      for (let i = lines.length; i < previousFrameLines.length; i++) {
+        buf += `\x1b[${i + 1};1H\x1b[K`;
+      }
+    }
+  }
+
+  buf += "\x1b[?2026l"; // end synchronized update
+  previousFrameLines = lines;
+  output.write(buf);
 }
 
 function renderDashboard(uiState: UiState, session: SessionState): void {
   const columns = output.columns ?? 120;
   const rows = output.rows ?? 32;
-  if (columns < 110) {
+  const layout = activeLayout();
+
+  if (layout === "focus") {
+    renderFocusPane(uiState, session, columns, rows);
+  } else if (layout === "compact" || columns < 110) {
     renderSinglePane(uiState, session, columns, rows);
   } else {
     renderDoublePane(uiState, session, columns, rows);
@@ -441,21 +677,33 @@ function applyMenuKeyEvent(
 
   if (key.name === "up") {
     uiState.activeIndex = (uiState.activeIndex - 1 + INTERACTIVE_ACTIONS.length) % INTERACTIVE_ACTIONS.length;
+    if (uiState.tab !== "commands") uiState.tab = "commands";
     return {};
   }
   if (key.name === "down") {
     uiState.activeIndex = (uiState.activeIndex + 1) % INTERACTIVE_ACTIONS.length;
+    if (uiState.tab !== "commands") uiState.tab = "commands";
     return {};
   }
   if (key.name === "tab") {
     uiState.tab = nextTab(uiState.tab);
     return {};
   }
-  if (key.name === "pageup" && uiState.tab === "output") {
+  if (str === "h" && activeLayout() === "full") {
+    uiState.focusedPane = "left";
+    return {};
+  }
+  if (str === "l" && activeLayout() === "full") {
+    uiState.focusedPane = "right";
+    return {};
+  }
+  if (key.name === "pageup") {
+    uiState.tab = "output";
     uiState.outputOffset += 10;
     return {};
   }
-  if (key.name === "pagedown" && uiState.tab === "output") {
+  if (key.name === "pagedown") {
+    uiState.tab = "output";
     uiState.outputOffset = Math.max(0, uiState.outputOffset - 10);
     return {};
   }
@@ -508,24 +756,47 @@ function applyPromptKeyEvent(
   str: string | undefined,
   key: KeypressLike,
   uiState: UiState,
+  historyStore?: HistoryStore,
 ): { resolve?: string } {
   if (key.ctrl && key.name === "c") return { resolve: "" };
   if (key.name === "escape") return { resolve: "" };
   if (key.name === "return") return { resolve: uiState.inlinePromptValue ?? "" };
   if (key.name === "backspace") {
     uiState.inlinePromptValue = (uiState.inlinePromptValue ?? "").slice(0, -1);
+    uiState.historyCursor = -1;
+    return {};
+  }
+  if (key.name === "up" && historyStore && uiState.historyCategory) {
+    const entries = historyForCategory(historyStore, uiState.historyCategory);
+    if (entries.length > 0) {
+      if (uiState.historyCursor === -1) {
+        uiState.historyDraft = uiState.inlinePromptValue ?? "";
+      }
+      const next = Math.min(uiState.historyCursor + 1, entries.length - 1);
+      uiState.historyCursor = next;
+      uiState.inlinePromptValue = entries[entries.length - 1 - next];
+    }
+    return {};
+  }
+  if (key.name === "down" && historyStore && uiState.historyCategory) {
+    if (uiState.historyCursor > 0) {
+      const entries = historyForCategory(historyStore, uiState.historyCategory);
+      uiState.historyCursor -= 1;
+      uiState.inlinePromptValue = entries[entries.length - 1 - uiState.historyCursor];
+    } else if (uiState.historyCursor === 0) {
+      uiState.historyCursor = -1;
+      uiState.inlinePromptValue = uiState.historyDraft ?? "";
+    }
     return {};
   }
   if (typeof str === "string" && str.length > 0 && !key.ctrl) {
     uiState.inlinePromptValue = `${uiState.inlinePromptValue ?? ""}${str}`;
+    uiState.historyCursor = -1;
   }
   return {};
 }
 
 function applyRunEvent(event: RunEvent, session: SessionState): string | null {
-  if (event.type === "line") {
-    return null;
-  }
   if (event.type === "tick") {
     session.lastStatus = `running ${event.spinner}`;
     return null;
@@ -609,16 +880,19 @@ async function consumeStream(
     const { done, value } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
-    buffer = buffer.replace(/\r(?!\n)/g, "\n");
-    const parts = buffer.split(/\r?\n/);
+    // Split on \n (handles \r\n via split). Defer trailing \r to next
+    // chunk to avoid false split when \r\n spans chunk boundaries.
+    const parts = buffer.split("\n");
     buffer = parts.pop() ?? "";
     for (const part of parts) {
-      onLine(prefix ? `[${prefix}] ${part}` : part);
+      const cleaned = part.replace(/\r/g, "");
+      onLine(prefix ? `[${prefix}] ${cleaned}` : cleaned);
     }
   }
 
-  if (buffer.trim().length > 0) {
-    onLine(prefix ? `[${prefix}] ${buffer}` : buffer);
+  const remaining = buffer.replace(/\r/g, "").trim();
+  if (remaining.length > 0) {
+    onLine(prefix ? `[${prefix}] ${remaining}` : remaining);
   }
 }
 
@@ -639,8 +913,6 @@ async function runSubcommand(
   session.lastStdoutLines = [];
   session.lastStderrLines = [];
   uiState.outputOffset = 0;
-
-  const spinnerFrames = ["|", "/", "-", "\\"];
   let spinnerIndex = 0;
   let finalStatus: string | null = null;
   const dispatch = (event: RunEvent) => {
@@ -652,7 +924,7 @@ async function runSubcommand(
   };
 
   const spinner = setInterval(() => {
-    dispatch({ type: "tick", spinner: spinnerFrames[spinnerIndex % spinnerFrames.length] });
+    dispatch({ type: "tick", spinner: SPINNER_FRAMES[spinnerIndex % SPINNER_FRAMES.length] });
     spinnerIndex += 1;
   }, 90);
 
@@ -691,6 +963,8 @@ async function questionInDashboard(
   uiState: UiState,
   session: SessionState,
   requestRender: () => void,
+  historyStore?: HistoryStore,
+  historyCategory?: string,
 ): Promise<string> {
   if (!input.isTTY || !output.isTTY || typeof input.setRawMode !== "function") {
     if (!rl) throw new Error("readline interface is unavailable");
@@ -701,6 +975,9 @@ async function questionInDashboard(
   uiState.tab = "output";
   uiState.inlinePromptLabel = label;
   uiState.inlinePromptValue = "";
+  uiState.historyCategory = historyCategory;
+  uiState.historyCursor = -1;
+  uiState.historyDraft = undefined;
   requestRender();
 
   return await new Promise<string>((resolve) => {
@@ -708,11 +985,14 @@ async function questionInDashboard(
       input.off("keypress", onKeypress);
       uiState.inlinePromptLabel = undefined;
       uiState.inlinePromptValue = undefined;
+      uiState.historyCategory = undefined;
+      uiState.historyCursor = -1;
+      uiState.historyDraft = undefined;
       requestRender();
     };
 
     const onKeypress = (str: string | undefined, key: { name?: string; ctrl?: boolean }) => {
-      const { resolve: resolved } = applyPromptKeyEvent(str, key, uiState);
+      const { resolve: resolved } = applyPromptKeyEvent(str, key, uiState, historyStore);
       if (resolved !== undefined) {
         cleanup();
         resolve(resolved);
@@ -728,22 +1008,26 @@ async function questionInDashboard(
 
 export async function cmdTui(): Promise<void> {
   const useRawTui = input.isTTY && output.isTTY && typeof input.setRawMode === "function";
+  previousFrameLines = []; // reset from any previous cmdTui() invocation
   const frameIntervalMs = 33;
   let scheduledRender: ReturnType<typeof setTimeout> | null = null;
   let lastRenderAt = 0;
   const initialIndex = INTERACTIVE_ACTIONS.findIndex((option) => option.key === "1");
   const uiState: UiState = {
     activeIndex: initialIndex >= 0 ? initialIndex : 0,
-    tab: "output",
+    tab: "commands",
     outputOffset: 0,
     outputSearch: "",
     showStderr: false,
+    focusedPane: "left",
+    historyCursor: -1,
   };
   const session: SessionState = {
     lastStdoutLines: [],
     lastStderrLines: [],
     lastOutputLines: [],
   };
+  const historyStore = loadHistory();
   const requestRender = (force = false) => {
     if (!useRawTui) return;
     const now = Date.now();
@@ -764,7 +1048,10 @@ export async function cmdTui(): Promise<void> {
       renderDashboard(uiState, session);
     }, frameIntervalMs - elapsed);
   };
-  const onResize = () => requestRender(true);
+  const onResize = () => {
+    previousFrameLines = []; // force full redraw on terminal resize
+    requestRender(true);
+  };
   const rl = useRawTui ? null : createInterface({ input, output });
 
   try {
@@ -788,6 +1075,8 @@ export async function cmdTui(): Promise<void> {
           uiState,
           session,
           () => requestRender(),
+          historyStore,
+          "filter",
         );
         requestRender(true);
         uiState.outputSearch = query.trim();
@@ -799,7 +1088,7 @@ export async function cmdTui(): Promise<void> {
         continue;
       }
       if (choice === "__palette__") {
-        const query = await questionInDashboard(rl, "Palette (/): ", uiState, session, () => requestRender());
+        const query = await questionInDashboard(rl, "Palette (/): ", uiState, session, () => requestRender(), historyStore, "palette");
         const match = matchPalette(query);
         if (!match) {
           session.lastStatus = `no palette match: ${query.trim() || "(empty)"}`;
@@ -815,6 +1104,7 @@ export async function cmdTui(): Promise<void> {
       }
 
       try {
+        session.lastError = undefined;
         switch (choice) {
           case "1": {
             const query = requireInput(
@@ -825,12 +1115,16 @@ export async function cmdTui(): Promise<void> {
                   uiState,
                   session,
                   () => requestRender(),
+                  historyStore,
+                  "search",
                 ),
                 session.lastSearch,
               ),
               "Query",
             );
             session.lastSearch = query;
+            pushHistory(historyStore, "search", query);
+            saveHistory(historyStore);
             const planResult = buildTuiExecutionPlan(choice, query);
             if (planResult.type === "error" || !planResult.data) throw new Error(planResult.message);
             session.lastCommand = planResult.data.command;
@@ -847,10 +1141,14 @@ export async function cmdTui(): Promise<void> {
                   uiState,
                   session,
                   () => requestRender(),
+                  historyStore,
+                  "location",
                 ),
               session.lastLocation,
             );
-            session.lastLocation = location;
+            if (location) session.lastLocation = location;
+            pushHistory(historyStore, "location", location);
+            saveHistory(historyStore);
             const planResult = buildTuiExecutionPlan(choice, location);
             if (planResult.type === "error" || !planResult.data) throw new Error(planResult.message);
             session.lastCommand = planResult.data.command;
@@ -868,12 +1166,16 @@ export async function cmdTui(): Promise<void> {
                   uiState,
                   session,
                   () => requestRender(),
+                  historyStore,
+                  "username",
                 ),
                 session.lastUsername,
               ),
               "Username",
             ).replace(/^@/, "");
             session.lastUsername = username;
+            pushHistory(historyStore, "username", username);
+            saveHistory(historyStore);
             const planResult = buildTuiExecutionPlan(choice, username);
             if (planResult.type === "error" || !planResult.data) throw new Error(planResult.message);
             session.lastCommand = planResult.data.command;
@@ -891,12 +1193,16 @@ export async function cmdTui(): Promise<void> {
                   uiState,
                   session,
                   () => requestRender(),
+                  historyStore,
+                  "tweet",
                 ),
                 session.lastTweetRef,
               ),
               "Tweet ID/URL",
             );
             session.lastTweetRef = tweetRef;
+            pushHistory(historyStore, "tweet", tweetRef);
+            saveHistory(historyStore);
             const planResult = buildTuiExecutionPlan(choice, tweetRef);
             if (planResult.type === "error" || !planResult.data) throw new Error(planResult.message);
             session.lastCommand = planResult.data.command;
@@ -914,12 +1220,16 @@ export async function cmdTui(): Promise<void> {
                   uiState,
                   session,
                   () => requestRender(),
+                  historyStore,
+                  "article",
                 ),
                 session.lastArticleUrl,
               ),
               "Article URL",
             );
             session.lastArticleUrl = url;
+            pushHistory(historyStore, "article", url);
+            saveHistory(historyStore);
             const planResult = buildTuiExecutionPlan(choice, url);
             if (planResult.type === "error" || !planResult.data) throw new Error(planResult.message);
             session.lastCommand = planResult.data.command;
@@ -944,6 +1254,7 @@ export async function cmdTui(): Promise<void> {
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
         session.lastStatus = `error: ${message}`;
+        session.lastError = message;
       }
     }
   } finally {
@@ -959,6 +1270,17 @@ export async function cmdTui(): Promise<void> {
 
 export const __tuiTestUtils = {
   applyMenuKeyEvent,
+  applyPromptKeyEvent,
   outputViewLines,
   sanitizeOutputLine,
+  loadHistory,
+  saveHistory,
+  pushHistory,
+  historyForCategory,
+  activeLayout,
+  buildContextualFooter,
+  buildContextHelp,
+  buildTabLines,
+  HISTORY_FILE,
+  WELCOME_LINES,
 };
