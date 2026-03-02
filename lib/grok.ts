@@ -359,7 +359,6 @@ function estimateCost(
 
 export async function cmdAnalyze(args: string[]): Promise<void> {
   let model = DEFAULT_MODEL;
-  let systemPrompt: string | undefined;
   let tweetFile: string | undefined;
   let pipeMode = false;
   let imageUrl: string | undefined;
@@ -374,13 +373,6 @@ export async function cmdAnalyze(args: string[]): Promise<void> {
         model = args[++i];
         if (!model) {
           console.error("Error: --model requires a value (grok-3, grok-3-mini, grok-2, grok-2-vision)");
-          process.exit(1);
-        }
-        break;
-      case "--system":
-        systemPrompt = args[++i];
-        if (!systemPrompt) {
-          console.error("Error: --system requires a prompt string");
           process.exit(1);
         }
         break;
@@ -447,7 +439,7 @@ export async function cmdAnalyze(args: string[]): Promise<void> {
       const messages: GrokMessage[] = [
         {
           role: "system",
-          content: systemPrompt || GENERAL_ANALYST_SYSTEM,
+          content: GENERAL_ANALYST_SYSTEM,
         },
         { role: "user", content: query },
       ];
@@ -526,7 +518,6 @@ Usage: xint analyze <query>           Ask Grok a question
 
 Options:
   --model <name>     Model: grok-3, grok-3-mini (default), grok-2, grok-2-vision
-  --system <prompt>  Custom system prompt
   --tweets <file>    Path to JSON file containing tweets
   --pipe             Read tweet JSON from stdin
   --image, -i <url> Image URL to analyze with Grok Vision

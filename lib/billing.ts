@@ -11,7 +11,8 @@ function envOrDotEnv(key: string): string | undefined {
   try {
     const envPath = join(import.meta.dir, "..", ".env");
     const raw = readFileSync(envPath, "utf-8");
-    const match = raw.match(new RegExp(`^${key}=["']?([^"'\\n]+)`, "m"));
+    const safeKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const match = raw.match(new RegExp(`^${safeKey}=["']?([^"'\\n]+)`, "m"));
     if (match?.[1]) return match[1].trim();
   } catch {
     // no-op; fall back to runtime env/defaults
