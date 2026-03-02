@@ -45,6 +45,49 @@ main() {
   local tarball="${tmpdir}/xint.tar.gz"
   curl -fsSL "$tarball_url" -o "$tarball"
 
+  # Checksum verification
+  local checksums_url="https://github.com/${OWNER}/${REPO}/releases/download/${version}/checksums.txt"
+  local checksums_file="${tmpdir}/checksums.txt"
+  if curl -fsSL "$checksums_url" -o "$checksums_file" 2>/dev/null; then
+    local asset_name
+    asset_name="$(basename "$tarball_url")"
+    local expected
+    expected="$(awk -v name="$asset_name" '$0 ~ name {print $1; exit}' "$checksums_file" || true)"
+    if [[ -n "$expected" ]]; then
+      local actual=""
+      if command -v sha256sum >/dev/null 2>&1; then
+        actual="$(sha256sum "$tarball" | awk '{print $1}')"
+      elif command -v shasum >/dev/null 2>&1; then
+        actual="$(shasum -a 256 "$tarball" | awk '{print $1}')"
+      fi
+      if [[ -n "$actual" ]]; then
+        if [[ "$actual" != "$expected" ]]; then
+          echo "error: checksum mismatch for $asset_name" >&2
+          exit 1
+        fi
+        echo "==> Checksum verified"
+      else
+        if [[ "${XINT_INSTALL_REQUIRE_CHECKSUM:-0}" == "1" ]]; then
+          echo "error: checksum required but neither sha256sum nor shasum is available" >&2
+          exit 1
+        fi
+        echo "==> Checksum tool unavailable; skipping verification"
+      fi
+    else
+      if [[ "${XINT_INSTALL_REQUIRE_CHECKSUM:-0}" == "1" ]]; then
+        echo "error: checksum required but no entry found in checksums.txt" >&2
+        exit 1
+      fi
+      echo "==> Checksums file present but no entry for $asset_name; skipping verification"
+    fi
+  else
+    if [[ "${XINT_INSTALL_REQUIRE_CHECKSUM:-0}" == "1" ]]; then
+      echo "error: checksum required but checksums.txt not found in release" >&2
+      exit 1
+    fi
+    echo "==> No checksums.txt in release; skipping checksum verification"
+  fi
+
   echo "==> Extracting"
   tar -xzf "$tarball" -C "$tmpdir"
   local src_dir

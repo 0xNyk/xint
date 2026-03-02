@@ -28,10 +28,7 @@ credentials:
     required: false
 required_env_vars:
   - X_BEARER_TOKEN
-requiredEnvVars:
-  - X_BEARER_TOKEN
 primary_credential: X_BEARER_TOKEN
-primaryCredential: X_BEARER_TOKEN
 security:
   always: false
   autonomous: false

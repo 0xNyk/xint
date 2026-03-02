@@ -9,6 +9,7 @@ import { checkBudget } from "./costs";
 import { recordCommandResult } from "./reliability";
 import { readFileSync } from "fs";
 import { join } from "path";
+import { timingSafeEqual } from "crypto";
 import { createMcpToolHandlers, type MCPToolHandler, type ToolExecutionResult } from "./mcp_dispatcher";
 
 type PolicyMode = "read_only" | "engagement" | "moderation";
@@ -38,7 +39,8 @@ function envOrDotEnv(key: string): string | undefined {
   try {
     const envPath = join(import.meta.dir, "..", ".env");
     const raw = readFileSync(envPath, "utf-8");
-    const m = raw.match(new RegExp(`^${key}=["']?([^"'\\n]+)`, "m"));
+    const safeKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const m = raw.match(new RegExp(`^${safeKey}=["']?([^"'\\n]+)`, "m"));
     if (m?.[1]) return m[1].trim();
   } catch {}
   return undefined;
@@ -664,7 +666,11 @@ async function runStdio(options: MCPServerOptions) {
 
 function hasValidBearerToken(authHeader: string | undefined, expectedToken: string): boolean {
   if (!authHeader || !authHeader.startsWith("Bearer ")) return false;
-  return authHeader.slice("Bearer ".length).trim() === expectedToken;
+  const provided = authHeader.slice("Bearer ".length).trim();
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expectedToken);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
 }
 
 async function runSSE(port: number, options: MCPSSEServerOptions) {
