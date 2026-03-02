@@ -542,19 +542,22 @@ commit_repo() {
   local repo="$1"
   shift
   local files=("$@")
-  local branch
-
-  branch="$(git -C "$(repo_path "$repo")" rev-parse --abbrev-ref HEAD)"
+  local release_branch="release/$VERSION"
 
   if [[ "$DRY_RUN" == "true" ]]; then
-    log "Would commit in $repo on branch $branch with files: ${files[*]}"
+    log "Would create branch $release_branch and commit in $repo with files: ${files[*]}"
     return
   fi
+
+  # Create release branch from current HEAD
+  run_in_repo "$repo" git checkout -b "$release_branch"
 
   run_in_repo "$repo" git add -- "${files[@]}"
 
   if run_in_repo "$repo" git diff --cached --quiet; then
-    warn "No staged release changes in $repo; skipping commit"
+    warn "No staged release changes in $repo; switching back to main"
+    run_in_repo "$repo" git checkout main
+    run_in_repo "$repo" git branch -d "$release_branch"
     return
   fi
 
@@ -563,9 +566,42 @@ commit_repo() {
 
 push_repo() {
   local repo="$1"
-  local branch
-  branch="$(git -C "$(repo_path "$repo")" rev-parse --abbrev-ref HEAD)"
-  run_mutation_in_repo "$repo" git push origin "$branch"
+  local release_branch="release/$VERSION"
+  local path
+
+  path="$(repo_path "$repo")"
+
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "Would push $release_branch, create PR, squash-merge, and clean up in $repo"
+    return
+  fi
+
+  # Push release branch
+  run_mutation_in_repo "$repo" git push -u origin "$release_branch"
+
+  # Create PR and squash-merge it
+  if command -v gh >/dev/null 2>&1; then
+    local pr_url
+    pr_url="$(gh pr create \
+      --title "chore(release): v$VERSION" \
+      --body "Automated release v$VERSION" \
+      --base main \
+      --head "$release_branch" \
+      --repo "$GITHUB_ORG/$repo" 2>&1)" || die "Failed to create PR for $repo: $pr_url"
+    log "Created PR for $repo: $pr_url"
+
+    gh pr merge "$release_branch" \
+      --squash \
+      --delete-branch \
+      --repo "$GITHUB_ORG/$repo" || die "Failed to merge PR for $repo"
+    log "Merged and cleaned up PR for $repo"
+  else
+    warn "gh not found; pushed branch $release_branch but could not create/merge PR for $repo"
+  fi
+
+  # Switch back to main and pull the merged commit
+  run_in_repo "$repo" git checkout main
+  run_in_repo "$repo" git pull --rebase origin main
 }
 
 publish_clawdhub() {
