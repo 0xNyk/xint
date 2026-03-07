@@ -546,3 +546,69 @@ xint/
 └── references/
     └── x-api.md        (X API endpoint reference)
 ```
+
+## Package API Tools
+
+The Package API provides agent memory package management:
+
+| Tool | Purpose | Auth |
+|------|---------|------|
+| `xint_package_create` | Create ingest job from topic query | XINT_PACKAGE_API_KEY |
+| `xint_package_status` | Get package metadata + freshness | XINT_PACKAGE_API_KEY |
+| `xint_package_query` | Query packages, return claims + citations | XINT_PACKAGE_API_KEY |
+| `xint_package_refresh` | Trigger new snapshot | XINT_PACKAGE_API_KEY |
+| `xint_package_search` | Search package catalog | XINT_PACKAGE_API_KEY |
+| `xint_package_publish` | Publish to shared catalog | XINT_PACKAGE_API_KEY |
+
+**Workflow:**
+1. `xint_package_create` -> creates package with topic query + sources
+2. `xint_package_status` -> poll until status is "ready"
+3. `xint_package_query` -> retrieve claims with citations
+4. `xint_package_refresh` -> trigger re-ingest when data is stale
+5. `xint_package_publish` -> share to catalog when quality is confirmed
+
+## Agent Patterns
+
+### Token Budget Awareness
+- Use `--quick` flag for initial discovery (1 page, 1hr cache, noise filter)
+- Use `--fields id,text,metrics.likes` to reduce response size
+- Prefer `xint_search` with `limit: 5` for quick checks
+- Use `xint_costs` to check budget before expensive operations
+
+### Batch Operations
+- Search + profile in sequence, not parallel (rate limit: 350ms between requests)
+- Use `xint_watch` for polling instead of repeated searches
+- Combine `xint_report` for topic intelligence instead of multiple searches
+
+### Context Window Management
+- `xint_search` with limit=15: ~3KB response
+- `xint_profile` with count=20: ~4KB response
+- `xint_article`: 1-10KB depending on article length
+- `xint_trends`: ~2KB response
+- Use `--fields` flag to reduce output to only needed fields
+
+## Error Recovery Matrix
+
+| Error Code | Retryable | Agent Action | Example |
+|-----------|-----------|-------------|---------|
+| `RATE_LIMITED` | Yes | Wait `retry_after_ms`, then retry | 429 from X API |
+| `AUTH_FAILED` | No | Stop, report missing credential | Missing X_BEARER_TOKEN |
+| `NOT_FOUND` | No | Skip resource, try alternative | Deleted tweet |
+| `BUDGET_DENIED` | No | Stop, use `xint costs budget set N` | Daily limit exceeded |
+| `POLICY_DENIED` | No | Stop, escalate to user | Need --policy=engagement |
+| `VALIDATION_ERROR` | No | Fix parameter, retry | Invalid tweet_id format |
+| `TIMEOUT` | Yes | Retry after 5s | Network timeout |
+| `API_ERROR` | If 5xx | Retry after 30s for 5xx, stop for 4xx | X API outage |
+
+## Fallback Chain
+
+When a tool fails, try the next option:
+
+1. `xint_search` (X API v2, fast, real-time)
+2. `xint_xsearch` (xAI Grok search, AI-enhanced, requires XAI_API_KEY)
+3. Cached results from previous searches (15min TTL)
+
+For article fetching:
+1. `xint_article` with tweet URL (extracts inline X Article)
+2. `xint_article` with article URL (web fetch)
+3. `xint_search` for tweets about the topic

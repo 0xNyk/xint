@@ -69,6 +69,17 @@ export function getCapabilitiesManifest() {
       content_type: "application/json",
       supports_compact: true,
     },
+    introspection: {
+      describe: "xint <command> --describe",
+      schema: "xint <command> --schema",
+      fields: "--fields id,text,metrics.likes",
+      dry_run: "--dry-run (mutation commands only)",
+    },
+    rate_limits: {
+      requests_per_15min: 450,
+      delay_between_requests_ms: 350,
+      daily_budget_default_usd: 50,
+    },
     constraints: {
       x_api_only: true,
       xai_grok_only: true,

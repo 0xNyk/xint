@@ -255,3 +255,46 @@ export function formatJsonl(tweets: Tweet[]): string {
 export function formatResultsJson(tweets: Tweet[]): string {
   return JSON.stringify(tweets, null, 2);
 }
+
+/**
+ * Filter objects to only include specified dot-separated field paths.
+ * Usage: filterFields(data, "id,text,metrics.likes")
+ */
+export function filterFields<T>(data: T, fields: string): T {
+  if (!data || typeof data !== "object") return data;
+  const fieldPaths = fields.split(",").map(f => f.trim());
+
+  function pick(obj: Record<string, unknown>, paths: string[]): Record<string, unknown> {
+    const result: Record<string, unknown> = {};
+    for (const path of paths) {
+      const parts = path.split(".");
+      let current: unknown = obj;
+      for (const part of parts) {
+        if (current && typeof current === "object" && !Array.isArray(current)) {
+          current = (current as Record<string, unknown>)[part];
+        } else {
+          current = undefined;
+          break;
+        }
+      }
+      if (current !== undefined) {
+        let target = result;
+        for (let i = 0; i < parts.length - 1; i++) {
+          if (!target[parts[i]] || typeof target[parts[i]] !== "object") {
+            target[parts[i]] = {};
+          }
+          target = target[parts[i]] as Record<string, unknown>;
+        }
+        target[parts[parts.length - 1]] = current;
+      }
+    }
+    return result;
+  }
+
+  if (Array.isArray(data)) {
+    return data.map(item =>
+      item && typeof item === "object" ? pick(item as Record<string, unknown>, fieldPaths) : item
+    ) as T;
+  }
+  return pick(data as Record<string, unknown>, fieldPaths) as T;
+}

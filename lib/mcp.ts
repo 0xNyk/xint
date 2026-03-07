@@ -6,6 +6,7 @@
  */
 
 import { checkBudget } from "./costs";
+import { classifyError } from "./errors";
 import { recordCommandResult } from "./reliability";
 import { readFileSync } from "fs";
 import { join } from "path";
@@ -94,6 +95,76 @@ function ensurePackageQueryCitations(data: unknown, requireCitations: boolean): 
   }
 }
 
+// Reusable output schema fragments
+const META_SCHEMA = {
+  type: "object",
+  properties: {
+    latency_ms: { type: "number" },
+    cached: { type: "boolean" },
+    estimated_cost_usd: { type: "number" },
+  },
+} as const;
+
+const PAGINATION_SCHEMA = {
+  type: "object",
+  properties: {
+    total: { type: "number" },
+    returned: { type: "number" },
+    has_more: { type: "boolean" },
+  },
+} as const;
+
+const TWEET_SCHEMA = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    text: { type: "string" },
+    username: { type: "string" },
+    name: { type: "string" },
+    created_at: { type: "string" },
+    conversation_id: { type: "string" },
+    tweet_url: { type: "string" },
+    metrics: {
+      type: "object",
+      properties: {
+        likes: { type: "number" },
+        retweets: { type: "number" },
+        replies: { type: "number" },
+        impressions: { type: "number" },
+        bookmarks: { type: "number" },
+      },
+    },
+    urls: { type: "array", items: { type: "object" } },
+    hashtags: { type: "array", items: { type: "string" } },
+    mentions: { type: "array", items: { type: "string" } },
+  },
+} as const;
+
+function tweetListOutput() {
+  return {
+    type: "object",
+    properties: {
+      type: { type: "string", enum: ["success", "info", "error"] },
+      message: { type: "string" },
+      data: { type: "array", items: TWEET_SCHEMA },
+      pagination: PAGINATION_SCHEMA,
+      _meta: META_SCHEMA,
+    },
+  };
+}
+
+function simpleOutput(dataDesc: Record<string, unknown>) {
+  return {
+    type: "object",
+    properties: {
+      type: { type: "string", enum: ["success", "info", "error"] },
+      message: { type: "string" },
+      data: { type: "object", properties: dataDesc },
+      _meta: META_SCHEMA,
+    },
+  };
+}
+
 // Tool definitions
 const TOOLS = [
   {
@@ -106,11 +177,12 @@ const TOOLS = [
         limit: { type: "number", description: "Max results to return (default: 15, max: 100)" },
         since: { type: "string", description: "Time filter: 1h, 1d, 7d, 30d (default: 7d)" },
         sort: { type: "string", enum: ["likes", "retweets", "recent", "impressions"], description: "Sort order (default: likes)" },
-        noReplies: { type: "boolean", description: "Exclude replies (default: false)" },
-        noRetweets: { type: "boolean", description: "Exclude retweets (default: true)" },
+        no_replies: { type: "boolean", description: "Exclude replies (default: false)" },
+        no_retweets: { type: "boolean", description: "Exclude retweets (default: true)" },
       },
       required: ["query"],
     },
+    outputSchema: tweetListOutput(),
   },
   {
     name: "xint_profile",
@@ -120,10 +192,11 @@ const TOOLS = [
       properties: {
         username: { type: "string", description: "Twitter username (without @)" },
         count: { type: "number", description: "Number of tweets (default: 20, max: 100)" },
-        includeReplies: { type: "boolean", description: "Include replies (default: false)" },
+        include_replies: { type: "boolean", description: "Include replies (default: false)" },
       },
       required: ["username"],
     },
+    outputSchema: simpleOutput({ user: { type: "object" }, tweets: { type: "array", items: TWEET_SCHEMA } }),
   },
   {
     name: "xint_thread",
@@ -131,11 +204,12 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        tweetId: { type: "string", description: "Tweet ID or URL" },
+        tweet_id: { type: "string", description: "Tweet ID or URL" },
         pages: { type: "number", description: "Number of pages to fetch (default: 2, max: 5)" },
       },
-      required: ["tweetId"],
+      required: ["tweet_id"],
     },
+    outputSchema: simpleOutput({ tweets: { type: "array", items: TWEET_SCHEMA } }),
   },
   {
     name: "xint_tweet",
@@ -143,10 +217,11 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        tweetId: { type: "string", description: "Tweet ID or URL" },
+        tweet_id: { type: "string", description: "Tweet ID or URL" },
       },
-      required: ["tweetId"],
+      required: ["tweet_id"],
     },
+    outputSchema: simpleOutput({ id: { type: "string" }, text: { type: "string" }, username: { type: "string" }, metrics: { type: "object" } }),
   },
   {
     name: "xint_article",
@@ -156,10 +231,11 @@ const TOOLS = [
       properties: {
         url: { type: "string", description: "Article URL or X tweet URL to fetch" },
         full: { type: "boolean", description: "Fetch full content (default: false)" },
-        aiPrompt: { type: "string", description: "Analyze article with Grok AI - ask a question about the content" },
+        ai_prompt: { type: "string", description: "Analyze article with Grok AI - ask a question about the content" },
       },
       required: ["url"],
     },
+    outputSchema: simpleOutput({ title: { type: "string" }, content: { type: "string" }, url: { type: "string" } }),
   },
   {
     name: "xint_xsearch",
@@ -172,6 +248,7 @@ const TOOLS = [
       },
       required: ["query"],
     },
+    outputSchema: tweetListOutput(),
   },
   {
     name: "xint_collections_list",
@@ -180,6 +257,7 @@ const TOOLS = [
       type: "object",
       properties: {},
     },
+    outputSchema: simpleOutput({ collections: { type: "array", items: { type: "object" } } }),
   },
   {
     name: "xint_collections_search",
@@ -187,12 +265,13 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        collectionId: { type: "string", description: "Collection ID to search in" },
+        collection_id: { type: "string", description: "Collection ID to search in" },
         query: { type: "string", description: "Search query" },
         limit: { type: "number", description: "Max results (default: 5)" },
       },
-      required: ["collectionId", "query"],
+      required: ["collection_id", "query"],
     },
+    outputSchema: simpleOutput({ results: { type: "array", items: { type: "object" } } }),
   },
   {
     name: "xint_analyze",
@@ -206,6 +285,7 @@ const TOOLS = [
       },
       required: ["query"],
     },
+    outputSchema: simpleOutput({ analysis: { type: "string" }, model: { type: "string" } }),
   },
   {
     name: "xint_trends",
@@ -217,6 +297,7 @@ const TOOLS = [
         limit: { type: "number", description: "Number of trends (default: 20)" },
       },
     },
+    outputSchema: simpleOutput({ trends: { type: "array", items: { type: "object" } }, source: { type: "string" } }),
   },
   {
     name: "xint_bookmarks",
@@ -228,6 +309,7 @@ const TOOLS = [
         since: { type: "string", description: "Filter by recency: 1h, 1d, 7d" },
       },
     },
+    outputSchema: tweetListOutput(),
   },
   {
     name: "xint_package_create",
@@ -236,13 +318,13 @@ const TOOLS = [
       type: "object",
       properties: {
         name: { type: "string", description: "Human-readable package name" },
-        topicQuery: { type: "string", description: "Topic query used for ingest and refresh" },
+        topic_query: { type: "string", description: "Topic query used for ingest and refresh" },
         sources: {
           type: "array",
           items: { type: "string", enum: ["x_api_v2", "xai_search", "web_article"] },
           description: "Data sources to ingest",
         },
-        timeWindow: {
+        time_window: {
           type: "object",
           properties: {
             from: { type: "string", format: "date-time" },
@@ -251,10 +333,11 @@ const TOOLS = [
           required: ["from", "to"],
         },
         policy: { type: "string", enum: ["private", "shared_candidate"], description: "Package visibility policy" },
-        analysisProfile: { type: "string", enum: ["summary", "analyst", "forensic"] },
+        analysis_profile: { type: "string", enum: ["summary", "analyst", "forensic"] },
       },
-      required: ["name", "topicQuery", "sources", "timeWindow", "policy", "analysisProfile"],
+      required: ["name", "topic_query", "sources", "time_window", "policy", "analysis_profile"],
     },
+    outputSchema: simpleOutput({ package_id: { type: "string" }, status: { type: "string" } }),
   },
   {
     name: "xint_package_status",
@@ -262,10 +345,11 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        packageId: { type: "string", description: "Package identifier (pkg_*)" },
+        package_id: { type: "string", description: "Package identifier (pkg_*)" },
       },
-      required: ["packageId"],
+      required: ["package_id"],
     },
+    outputSchema: simpleOutput({ package_id: { type: "string" }, status: { type: "string" }, freshness: { type: "object" } }),
   },
   {
     name: "xint_package_query",
@@ -274,16 +358,17 @@ const TOOLS = [
       type: "object",
       properties: {
         query: { type: "string", description: "Question to ask over package memory" },
-        packageIds: {
+        package_ids: {
           type: "array",
           items: { type: "string" },
           description: "Package IDs included in retrieval scope",
         },
-        maxClaims: { type: "number", description: "Maximum number of claims (default: 10)" },
-        requireCitations: { type: "boolean", description: "Require citations in response (default: true)" },
+        max_claims: { type: "number", description: "Maximum number of claims (default: 10)" },
+        require_citations: { type: "boolean", description: "Require citations in response (default: true)" },
       },
-      required: ["query", "packageIds"],
+      required: ["query", "package_ids"],
     },
+    outputSchema: simpleOutput({ claims: { type: "array" }, citations: { type: "array" } }),
   },
   {
     name: "xint_package_refresh",
@@ -291,11 +376,12 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        packageId: { type: "string", description: "Package identifier" },
+        package_id: { type: "string", description: "Package identifier" },
         reason: { type: "string", enum: ["ttl", "manual", "event"] },
       },
-      required: ["packageId", "reason"],
+      required: ["package_id", "reason"],
     },
+    outputSchema: simpleOutput({ snapshot_version: { type: "number" }, status: { type: "string" } }),
   },
   {
     name: "xint_package_search",
@@ -308,6 +394,7 @@ const TOOLS = [
       },
       required: ["query"],
     },
+    outputSchema: simpleOutput({ packages: { type: "array", items: { type: "object" } } }),
   },
   {
     name: "xint_package_publish",
@@ -315,11 +402,66 @@ const TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
-        packageId: { type: "string", description: "Package identifier" },
-        snapshotVersion: { type: "number", description: "Snapshot version to publish" },
+        package_id: { type: "string", description: "Package identifier" },
+        snapshot_version: { type: "number", description: "Snapshot version to publish" },
       },
-      required: ["packageId", "snapshotVersion"],
+      required: ["package_id", "snapshot_version"],
     },
+    outputSchema: simpleOutput({ published: { type: "boolean" }, catalog_url: { type: "string" } }),
+  },
+  {
+    name: "xint_watch",
+    description: "Monitor X in real-time for new tweets matching a query",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search query to monitor" },
+        limit: { type: "number", description: "Max tweets per check (default: 10)" },
+        since: { type: "string", description: "Time filter: 1h, 1d, 7d" },
+      },
+      required: ["query"],
+    },
+    outputSchema: tweetListOutput(),
+  },
+  {
+    name: "xint_diff",
+    description: "Track follower/following changes for an account",
+    inputSchema: {
+      type: "object",
+      properties: {
+        username: { type: "string", description: "Twitter username to track" },
+        following: { type: "boolean", description: "Track following instead of followers (default: false)" },
+      },
+      required: ["username"],
+    },
+    outputSchema: simpleOutput({ added: { type: "array" }, removed: { type: "array" }, snapshot_date: { type: "string" } }),
+  },
+  {
+    name: "xint_report",
+    description: "Generate an intelligence report on a topic using search + AI analysis",
+    inputSchema: {
+      type: "object",
+      properties: {
+        topic: { type: "string", description: "Topic to research" },
+        sentiment: { type: "boolean", description: "Include sentiment analysis (default: false)" },
+        model: { type: "string", description: "Grok model to use (default: grok-3-mini)" },
+        pages: { type: "number", description: "Search pages (default: 2)" },
+      },
+      required: ["topic"],
+    },
+    outputSchema: simpleOutput({ topic: { type: "string" }, tweet_count: { type: "number" }, top_tweets: { type: "array", items: TWEET_SCHEMA } }),
+  },
+  {
+    name: "xint_sentiment",
+    description: "Analyze sentiment of tweets using Grok AI",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tweets: { type: "array", items: { type: "string" }, description: "Array of tweet texts to analyze" },
+      },
+      required: ["tweets"],
+    },
+    outputSchema: simpleOutput({ sentiment: { type: "string" }, scores: { type: "object" } }),
   },
   {
     name: "xint_cache_clear",
@@ -328,6 +470,7 @@ const TOOLS = [
       type: "object",
       properties: {},
     },
+    outputSchema: simpleOutput({ cleared: { type: "number" } }),
   },
   {
     name: "xint_costs",
@@ -342,6 +485,7 @@ const TOOLS = [
         },
       },
     },
+    outputSchema: simpleOutput({ period: { type: "string" }, summary: { type: "object" }, budget: { type: "object" } }),
   },
 ];
 
@@ -363,6 +507,10 @@ const TOOL_POLICY: Record<string, PolicyMode> = {
   xint_package_refresh: "read_only",
   xint_package_search: "read_only",
   xint_package_publish: "engagement",
+  xint_watch: "read_only",
+  xint_diff: "engagement",
+  xint_report: "read_only",
+  xint_sentiment: "read_only",
   xint_cache_clear: "read_only",
   xint_costs: "read_only",
 };
@@ -383,6 +531,10 @@ const TOOL_BUDGET_GUARDED = new Set<string>([
   "xint_package_refresh",
   "xint_package_search",
   "xint_package_publish",
+  "xint_watch",
+  "xint_diff",
+  "xint_report",
+  "xint_sentiment",
 ]);
 
 function policyRank(mode: PolicyMode): number {
@@ -465,6 +617,7 @@ export class MCPServer {
             Date.now() - toolStartedAtMs,
             { mode: "mcp", fallback: result.fallbackUsed },
           );
+          const latencyMs = Date.now() - toolStartedAtMs;
           return JSON.stringify({
             jsonrpc: "2.0",
             id: requestId,
@@ -476,6 +629,12 @@ export class MCPServer {
                     type: result.type,
                     message: result.message,
                     data: result.data,
+                    ...(result.pagination && { pagination: result.pagination }),
+                    _meta: {
+                      latency_ms: latencyMs,
+                      cached: result.cached ?? false,
+                      estimated_cost_usd: result.cost ?? 0,
+                    },
                   },
                   null,
                   2,
@@ -501,10 +660,15 @@ export class MCPServer {
           { mode: "mcp" },
         );
       }
+      const structured = classifyError(error);
       return JSON.stringify({
         jsonrpc: "2.0",
         id: requestId,
-        error: { code: -32603, message: error.message }
+        error: {
+          code: -32603,
+          message: error.message,
+          data: structured,
+        }
       });
     }
   }
