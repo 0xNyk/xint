@@ -4,11 +4,13 @@ description: >
   X Intelligence CLI — search, analyze, and engage on X/Twitter from the terminal.
   Use when: (1) user says "x research", "search x for", "search twitter for",
   "what are people saying about", "what's twitter saying", "check x for", "x search",
-  "search x", "find tweets about", "monitor x for", "track followers", (2) user is working on 
-  something where recent X discourse would provide useful context (new library releases, 
-  API changes, product launches, cultural events, industry drama), (3) user wants to find 
+  "search x", "find tweets about", "monitor x for", "track followers", (2) user is working on
+  something where recent X discourse would provide useful context (new library releases,
+  API changes, product launches, cultural events, industry drama), (3) user wants to find
   what devs/experts/community thinks about a topic, (4) user needs real-time monitoring ("watch"),
-  (5) user wants AI-powered analysis ("analyze", "sentiment", "report").
+  (5) user wants AI-powered analysis ("analyze", "sentiment", "report"),
+  (6) user wants to sync bookmarks to Obsidian ("sync bookmarks", "capture bookmarks",
+  "bookmark research", "save my bookmarks to obsidian").
   Also supports: bookmarks, likes, following (read/write), trending topics, Grok AI analysis,
   and cost tracking. Export as JSON, JSONL (pipeable), CSV, or Markdown.
   Non-goals: Not for posting tweets, not for DMs, not for enterprise features.
@@ -492,6 +494,74 @@ Resources shared:
 
 Use `--save` flag to save to `data/exports/`.
 
+## Obsidian Bookmark Sync (Optional)
+
+> Only activate when user explicitly asks to sync bookmarks to Obsidian (e.g., "sync bookmarks", "capture bookmarks", "bookmark research", "save my bookmarks to obsidian").
+
+Fetches recent X bookmarks, analyzes article content, and saves as structured research notes in the Obsidian inbox. Requires OAuth + Obsidian vault path (`~/obsidian/nyk/inbox/`).
+
+### Pipeline
+
+**Step 1 — Fetch bookmarks:**
+```bash
+xint bookmarks --limit {count} --json --policy engagement {--since flag if provided} {--query flag if provided}
+```
+Parse JSON output. Each bookmark has: id, text, username, name, created_at, metrics, urls, tweet_url.
+
+**Step 2 — Classify:** For each bookmark, determine type:
+- **article**: Contains X article URL (`x.com/i/article/...`) or thread with 3+ linked tweets
+- **thread**: Multi-tweet thread (conversation_id, reply chains)
+- **standalone**: Single tweet with insight/opinion/announcement
+- **link**: Tweet primarily sharing an external URL
+
+**Step 3 — Analyze content:**
+- For **article**/**thread**: Use Agent tool (subagent_type: "general-purpose") to fetch + analyze full content — run analyses in parallel (one agent per article)
+- For **standalone**/**link**: Analyze directly from tweet text + WebFetch for external links
+
+**Step 4 — Deduplicate:** Before creating files, check for existing notes:
+```bash
+grep -rl "{tweet_id}" ~/obsidian/nyk/inbox/ 2>/dev/null
+```
+Skip bookmarks that already have notes.
+
+**Step 5 — Generate research notes** at `~/obsidian/nyk/inbox/research-{slug}.md`:
+```yaml
+---
+id: research-{slug}
+created: {today's date}
+type: research
+status: inbox
+tags: [{auto-detected tags}]
+source: x-bookmarks
+tweet_id: "{tweet_id}"
+description: {one-line summary}
+---
+```
+Content sections: **Signal** (author, engagement, tweet URL) → **Core Thesis** → **Key Findings** (bullets) → **Why It Resonated** (engagement analysis) → **Actionable Takeaways** (checklist) → **Related** (wikilinks). Apply 2-4 tags per note.
+
+**Step 6 — Summary report:** Output a table of processed bookmarks (author, topic, engagement, file), counts of new/skipped/total.
+
+### Tag Detection Rules
+
+| Content Pattern | Tags |
+|----------------|------|
+| AI agents, deployment, orchestration | `ai-agents`, `agent-deployment` |
+| Enterprise, SaaS, business | `enterprise`, `business-strategy` |
+| Trading, quant, markets, DeFi | `quantitative-finance`, `prediction-markets` |
+| Claude, LLM, prompting | `ai-ml-research`, `llm-engineering` |
+| Security, hacking, CTF | `security-governance` |
+| Design, UI/UX, frontend | `design`, `frontend` |
+| Startup, growth, marketing | `startup`, `marketing` |
+| Coding, engineering, architecture | `software-engineering` |
+
+### Sync Heuristics
+
+- Bookmark-to-like ratio >2:1 = reference material, >3:1 = textbook-grade
+- Articles with >1K bookmarks are almost always worth full analysis
+- Standalone tweets with <100 likes can still be high-signal if from domain experts
+- All notes go to `inbox/` — promotion to `knowledge/graph/` happens via knowledge-doctor pipeline
+- Use `[[wikilinks]]` for internal cross-references (never standard markdown links)
+
 ## Cost Management
 
 All API calls are tracked in `data/api-costs.json`. The budget system warns when approaching limits but does not block calls (passive).
@@ -584,6 +654,7 @@ The Package API provides agent memory package management:
 - `xint_search` with limit=15: ~3KB response
 - `xint_profile` with count=20: ~4KB response
 - `xint_article`: 1-10KB depending on article length
+- Bookmark sync pipeline: ~2-8KB per bookmark (depends on article analysis)
 - `xint_trends`: ~2KB response
 - Use `--fields` flag to reduce output to only needed fields
 
