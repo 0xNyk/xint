@@ -8,6 +8,7 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import type { Tweet } from "./api";
+import { trackCostDirect } from "./costs";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -137,14 +138,23 @@ export async function grokChat(
     throw new Error("xAI API returned no choices");
   }
 
+  const usage = {
+    prompt_tokens: data.usage.prompt_tokens,
+    completion_tokens: data.usage.completion_tokens,
+    total_tokens: data.usage.prompt_tokens + data.usage.completion_tokens,
+  };
+
+  // Track cost in the central cost system
+  const pricing = MODEL_PRICING[model] || MODEL_PRICING[DEFAULT_MODEL];
+  const costUsd =
+    (usage.prompt_tokens / 1_000_000) * pricing.input +
+    (usage.completion_tokens / 1_000_000) * pricing.output;
+  trackCostDirect("grok_chat", XAI_ENDPOINT, costUsd);
+
   return {
     content: choice.message.content,
     model: data.model,
-    usage: {
-      prompt_tokens: data.usage.prompt_tokens,
-      completion_tokens: data.usage.completion_tokens,
-      total_tokens: data.usage.prompt_tokens + data.usage.completion_tokens,
-    },
+    usage,
   };
 }
 
@@ -325,14 +335,23 @@ export async function analyzeImage(
     throw new Error("xAI API returned no choices");
   }
 
+  const visionUsage = {
+    prompt_tokens: data.usage.prompt_tokens,
+    completion_tokens: data.usage.completion_tokens,
+    total_tokens: data.usage.prompt_tokens + data.usage.completion_tokens,
+  };
+
+  // Track vision cost in the central cost system
+  const visionPricing = MODEL_PRICING[model] || MODEL_PRICING[DEFAULT_MODEL];
+  const visionCostUsd =
+    (visionUsage.prompt_tokens / 1_000_000) * visionPricing.input +
+    (visionUsage.completion_tokens / 1_000_000) * visionPricing.output;
+  trackCostDirect("grok_vision", XAI_ENDPOINT, visionCostUsd);
+
   return {
     content: choice.message.content,
     model: data.model,
-    usage: {
-      prompt_tokens: data.usage.prompt_tokens,
-      completion_tokens: data.usage.completion_tokens,
-      total_tokens: data.usage.prompt_tokens + data.usage.completion_tokens,
-    },
+    usage: visionUsage,
   };
 }
 
