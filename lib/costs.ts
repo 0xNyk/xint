@@ -93,6 +93,14 @@ export const COST_RATES: Record<string, { per_tweet: number; per_call: number }>
   mutes_list:          { per_tweet: 0, per_call: 0.01 },
   mutes_add:           { per_tweet: 0, per_call: 0.01 },
   mutes_remove:        { per_tweet: 0, per_call: 0.01 },
+  // xAI/Grok operations — per_call is a rough estimate; actual cost is
+  // tracked via trackCostDirect() using real token usage from the API response.
+  grok_chat:           { per_tweet: 0, per_call: 0.001 },
+  grok_analyze:        { per_tweet: 0, per_call: 0.002 },
+  grok_vision:         { per_tweet: 0, per_call: 0.005 },
+  grok_sentiment:      { per_tweet: 0, per_call: 0.001 },
+  xai_article:         { per_tweet: 0, per_call: 0.003 },
+  xai_x_search:        { per_tweet: 0, per_call: 0.002 },
 };
 
 const DEFAULT_BUDGET: BudgetConfig = {
@@ -206,6 +214,37 @@ export function trackCost(
     endpoint,
     tweets_read: tweetsRead,
     cost_usd: Math.round(costUsd * 1e6) / 1e6, // avoid floating-point noise
+  };
+
+  const data = loadData();
+  data.entries.push(entry);
+  data.total_lifetime_usd = Math.round((data.total_lifetime_usd + entry.cost_usd) * 1e6) / 1e6;
+
+  const day = entry.timestamp.slice(0, 10);
+  const agg = ensureDailyAggregate(data, day);
+  updateAggregate(agg, entry);
+
+  pruneEntries(data);
+  saveData(data);
+
+  return entry;
+}
+
+/**
+ * Log a cost entry with an explicit USD amount (for token-based xAI/Grok costs).
+ * Use this when the actual cost is known from the API response.
+ */
+export function trackCostDirect(
+  operation: string,
+  endpoint: string,
+  costUsd: number,
+): CostEntry {
+  const entry: CostEntry = {
+    timestamp: new Date().toISOString(),
+    operation,
+    endpoint,
+    tweets_read: 0,
+    cost_usd: Math.round(costUsd * 1e6) / 1e6,
   };
 
   const data = loadData();

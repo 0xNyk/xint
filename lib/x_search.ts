@@ -7,6 +7,7 @@
 
 import { readFileSync } from "fs";
 import { join } from "path";
+import { trackCostDirect } from "./costs";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -160,7 +161,18 @@ export async function xSearch(
         results?: XSearchResult[];
         content?: Array<{ type?: string; text?: string }>;
       }>;
+      usage?: { input_tokens: number; output_tokens: number };
     };
+
+    // Track xAI x_search cost
+    if (data.usage) {
+      const inputCost = (data.usage.input_tokens / 1_000_000) * 3.0;   // grok-4 input rate
+      const outputCost = (data.usage.output_tokens / 1_000_000) * 15.0; // grok-4 output rate
+      trackCostDirect("xai_x_search", `${API_BASE}/responses`, inputCost + outputCost);
+    } else {
+      // Fallback: use estimated per-call rate
+      trackCostDirect("xai_x_search", `${API_BASE}/responses`, 0.002);
+    }
 
     // Extract results and summary
     const results: XSearchResult[] = [];

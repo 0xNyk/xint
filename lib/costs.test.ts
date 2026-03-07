@@ -4,7 +4,7 @@
  */
 
 import { describe, test, expect, beforeEach } from "bun:test";
-import { trackCost, checkBudget, getTodayCosts, setBudget, getCostSummary } from "./costs";
+import { trackCost, trackCostDirect, checkBudget, getTodayCosts, setBudget, getCostSummary } from "./costs";
 
 // Test file path - use temp for tests
 const TEST_DATA_FILE = "/tmp/xint-test-costs.json";
@@ -106,6 +106,22 @@ describe("Cost Tracking", () => {
   });
 });
 
+describe("Direct Cost Tracking (xAI/Grok)", () => {
+  test("trackCostDirect records exact USD amount", () => {
+    const entry = trackCostDirect("grok_chat", "https://api.x.ai/v1/chat/completions", 0.0042);
+
+    expect(entry.operation).toBe("grok_chat");
+    expect(entry.cost_usd).toBe(0.0042);
+    expect(entry.tweets_read).toBe(0);
+  });
+
+  test("trackCostDirect rounds to avoid floating-point noise", () => {
+    const entry = trackCostDirect("xai_article", "https://api.x.ai/v1/responses", 0.00000123);
+
+    expect(entry.cost_usd).toBe(0.000001);
+  });
+});
+
 describe("Cost Rates", () => {
   test("COST_RATES has search rate", () => {
     const { COST_RATES } = require("./costs");
@@ -145,7 +161,16 @@ describe("Cost Rates", () => {
 
   test("COST_RATES has bookmarks rate", () => {
     const { COST_RATES } = require("./costs");
-    
+
     expect(COST_RATES.bookmarks.per_tweet).toBe(0.005);
+  });
+
+  test("COST_RATES has xAI/Grok rates", () => {
+    const { COST_RATES } = require("./costs");
+
+    expect(COST_RATES.grok_chat.per_call).toBe(0.001);
+    expect(COST_RATES.grok_vision.per_call).toBe(0.005);
+    expect(COST_RATES.xai_article.per_call).toBe(0.003);
+    expect(COST_RATES.xai_x_search.per_call).toBe(0.002);
   });
 });

@@ -12,6 +12,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import { extractTweetId } from "./media";
 import type { TweetArticle } from "./api";
+import { trackCostDirect } from "./costs";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -146,6 +147,13 @@ export async function fetchArticle(
   }
 
   const data = (await res.json()) as ResponsesApiResult;
+
+  // Track xAI Responses API cost
+  if (data.usage) {
+    const inputCost = (data.usage.input_tokens / 1_000_000) * 3.0;   // grok-4 input rate
+    const outputCost = (data.usage.output_tokens / 1_000_000) * 15.0; // grok-4 output rate
+    trackCostDirect("xai_article", XAI_RESPONSES_ENDPOINT, inputCost + outputCost);
+  }
 
   // Extract text from response output
   const text = extractResponseText(data);
