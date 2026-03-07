@@ -145,6 +145,100 @@ const args = process.argv.slice(2);
 const policyMode = parseGlobalPolicy(args);
 const command = args[0];
 
+// --- Introspection: --describe and --schema ---
+// Import TOOLS from mcp.ts for introspection (lazy to avoid circular deps)
+async function handleIntrospection(): Promise<boolean> {
+  const describeIdx = args.indexOf("--describe");
+  const schemaIdx = args.indexOf("--schema");
+  if (describeIdx < 0 && schemaIdx < 0) return false;
+
+  // Dynamically import to get TOOLS array
+  const mcp = await import("./lib/mcp");
+  const toolsListMsg = await new mcp.MCPServer({ policyMode: "read_only", enforceBudget: false })
+    .handleMessage(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }));
+  const tools = JSON.parse(toolsListMsg || "{}").result?.tools || [];
+
+  // Map CLI command names to MCP tool names
+  const cmdToTool: Record<string, string> = {
+    search: "xint_search", s: "xint_search",
+    profile: "xint_profile", p: "xint_profile",
+    thread: "xint_thread", t: "xint_thread",
+    tweet: "xint_tweet",
+    article: "xint_article", read: "xint_article",
+    xsearch: "xint_xsearch", "ai-search": "xint_xsearch", x_search: "xint_xsearch",
+    collections: "xint_collections_list", kb: "xint_collections_list",
+    analyze: "xint_analyze", ask: "xint_analyze",
+    trends: "xint_trends", tr: "xint_trends",
+    bookmarks: "xint_bookmarks", bm: "xint_bookmarks",
+    watch: "xint_watch", w: "xint_watch",
+    diff: "xint_diff", followers: "xint_diff",
+    report: "xint_report",
+    costs: "xint_costs", cost: "xint_costs",
+    capabilities: "xint_costs", caps: "xint_costs",
+  };
+
+  const toolName = cmdToTool[command] || `xint_${command}`;
+  const tool = tools.find((t: any) => t.name === toolName);
+
+  if (!tool) {
+    console.log(JSON.stringify({ error: `No schema found for command '${command}'` }));
+    return true;
+  }
+
+  if (schemaIdx >= 0) {
+    console.log(JSON.stringify(tool.inputSchema, null, 2));
+  } else {
+    console.log(JSON.stringify({
+      name: tool.name,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+      ...(tool.outputSchema && { outputSchema: tool.outputSchema }),
+    }, null, 2));
+  }
+  return true;
+}
+
+// --- Field filtering utility ---
+function filterFields(data: unknown, fields: string): unknown {
+  if (!data || typeof data !== "object") return data;
+  const fieldPaths = fields.split(",").map(f => f.trim());
+
+  function pickFromObject(obj: Record<string, unknown>, paths: string[]): Record<string, unknown> {
+    const result: Record<string, unknown> = {};
+    for (const path of paths) {
+      const parts = path.split(".");
+      let current: unknown = obj;
+      for (const part of parts) {
+        if (current && typeof current === "object" && !Array.isArray(current)) {
+          current = (current as Record<string, unknown>)[part];
+        } else {
+          current = undefined;
+          break;
+        }
+      }
+      if (current !== undefined) {
+        // Set nested path in result
+        let target = result;
+        for (let i = 0; i < parts.length - 1; i++) {
+          if (!target[parts[i]] || typeof target[parts[i]] !== "object") {
+            target[parts[i]] = {};
+          }
+          target = target[parts[i]] as Record<string, unknown>;
+        }
+        target[parts[parts.length - 1]] = current;
+      }
+    }
+    return result;
+  }
+
+  if (Array.isArray(data)) {
+    return data.map(item =>
+      item && typeof item === "object" ? pickFromObject(item as Record<string, unknown>, fieldPaths) : item
+    );
+  }
+  return pickFromObject(data as Record<string, unknown>, fieldPaths);
+}
+
 const COMMAND_POLICY: Record<string, RequiredMode> = {
   search: "read_only",
   s: "read_only",
@@ -948,9 +1042,18 @@ function metricCommandName(cmd?: string): string | null {
 }
 
 async function main() {
+  // Handle --describe and --schema before any policy/command checks
+  if (await handleIntrospection()) return;
+
   enforcePolicyOrExit(command);
   const metricCommand = metricCommandName(command);
   const startedAtMs = Date.now();
+
+  // Handle --fields for output filtering
+  const fieldsOpt = getOpt("fields");
+
+  // Handle --dry-run for mutation commands
+  const dryRun = getFlag("dry-run");
 
   try {
     switch (command) {
@@ -985,18 +1088,22 @@ async function main() {
         await cmdLikes(args.slice(1));
         break;
       case "like":
+        if (dryRun) { console.log(JSON.stringify({ dry_run: true, action: "like", tweet_id: args[1] })); break; }
         await cmdLike(args.slice(1));
         break;
       case "unlike":
+        if (dryRun) { console.log(JSON.stringify({ dry_run: true, action: "unlike", tweet_id: args[1] })); break; }
         await cmdUnlike(args.slice(1));
         break;
       case "following":
         await cmdFollowing(args.slice(1));
         break;
       case "follow":
+        if (dryRun) { console.log(JSON.stringify({ dry_run: true, action: "follow", target: args[1] })); break; }
         await cmdFollow(args.slice(1));
         break;
       case "unfollow":
+        if (dryRun) { console.log(JSON.stringify({ dry_run: true, action: "unfollow", target: args[1] })); break; }
         await cmdUnfollow(args.slice(1));
         break;
       case "media":
@@ -1023,10 +1130,12 @@ async function main() {
         break;
       case "bookmark":
       case "bm-save":
+        if (dryRun) { console.log(JSON.stringify({ dry_run: true, action: "bookmark", tweet_id: args[1] })); break; }
         await cmdBookmarkSave(args.slice(1));
         break;
       case "unbookmark":
       case "bm-remove":
+        if (dryRun) { console.log(JSON.stringify({ dry_run: true, action: "unbookmark", tweet_id: args[1] })); break; }
         await cmdUnbookmark(args.slice(1));
         break;
       case "trends":

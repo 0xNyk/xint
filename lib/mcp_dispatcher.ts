@@ -27,27 +27,36 @@ export function createMcpToolHandlers(deps: MCPDispatcherDeps): Record<string, M
       });
 
       let results = tweets;
-      if (args.noRetweets) {
+      if (args.no_retweets ?? args.noRetweets) {
         results = results.filter((t: any) => !t.text.startsWith("RT @"));
       }
-      if (args.noReplies) {
+      if (args.no_replies ?? args.noReplies) {
         results = results.filter((t: any) => t.conversation_id === t.id);
       }
       trackCost("search", "/2/tweets/search/recent", tweets.length);
-      return actionSuccess("Search completed.", results.slice(0, Number(args.limit) || 15));
+      const limit = Number(args.limit) || 15;
+      const sliced = results.slice(0, limit);
+      const result = actionSuccess("Search completed.", sliced);
+      result.pagination = { total: results.length, returned: sliced.length, has_more: results.length > limit };
+      result.cost = tweets.length * 0.005;
+      return result;
     },
 
     async xint_profile(args) {
       const username = String(args.username || "");
       const count = Number(args.count) || 20;
-      const includeReplies = Boolean(args.includeReplies);
+      const includeReplies = Boolean(args.include_replies ?? args.includeReplies);
       const { user, tweets } = await api.profile(username, { count, includeReplies });
       trackCost("profile", `/2/users/by/username/${username}`, tweets.length + 1);
-      return actionSuccess("Profile lookup completed.", { user, tweets: tweets.slice(0, count) });
+      const slicedTweets = tweets.slice(0, count);
+      const result = actionSuccess("Profile lookup completed.", { user, tweets: slicedTweets });
+      result.pagination = { total: tweets.length, returned: slicedTweets.length, has_more: tweets.length > count };
+      result.cost = (tweets.length + 1) * 0.005;
+      return result;
     },
 
     async xint_thread(args) {
-      const tweetId = deps.extractTweetId(String(args.tweetId || ""));
+      const tweetId = deps.extractTweetId(String(args.tweet_id || args.tweetId || ""));
       const pages = Number(args.pages) || 2;
       const tweets = await api.thread(tweetId, { pages });
       trackCost("thread", "/2/tweets/search/recent", tweets.length);
@@ -55,7 +64,7 @@ export function createMcpToolHandlers(deps: MCPDispatcherDeps): Record<string, M
     },
 
     async xint_tweet(args) {
-      const tweetId = deps.extractTweetId(String(args.tweetId || ""));
+      const tweetId = deps.extractTweetId(String(args.tweet_id || args.tweetId || ""));
       const tweet = await api.getTweet(tweetId);
       trackCost("tweet", `/2/tweets/${tweetId}`, tweet ? 1 : 0);
       return actionSuccess("Tweet lookup completed.", tweet);
@@ -198,6 +207,48 @@ export function createMcpToolHandlers(deps: MCPDispatcherDeps): Record<string, M
         { snapshot_version: snapshotVersion },
       );
       return actionSuccess("Package publish requested.", data);
+    },
+
+    async xint_watch(args) {
+      const query = String(args.query || "");
+      const limit = Number(args.limit) || 10;
+      const since = typeof args.since === "string" ? args.since : "1h";
+      const tweets = await api.search(query, {
+        pages: 1,
+        sortOrder: "recency",
+        since,
+      });
+      trackCost("watch", "/2/tweets/search/recent", tweets.length);
+      const watchSliced = tweets.slice(0, limit);
+      const watchResult = actionSuccess("Watch check completed.", watchSliced);
+      watchResult.pagination = { total: tweets.length, returned: watchSliced.length, has_more: tweets.length > limit };
+      watchResult.cost = tweets.length * 0.005;
+      return watchResult;
+    },
+
+    async xint_diff(args) {
+      return actionInfo("Diff requires OAuth - use xint diff command.", {
+        note: "Diff requires OAuth - use xint diff command",
+      });
+    },
+
+    async xint_report(args) {
+      const topic = String(args.topic || "");
+      const pages = Number(args.pages) || 2;
+      const tweets = await api.search(topic, { pages, sortOrder: "relevancy" });
+      const sorted = api.sortBy(tweets, "likes");
+      trackCost("report", "/2/tweets/search/recent", tweets.length);
+      const reportResult = actionSuccess("Report data gathered.", {
+        topic,
+        tweet_count: sorted.length,
+        top_tweets: sorted.slice(0, 20),
+      });
+      reportResult.cost = tweets.length * 0.005;
+      return reportResult;
+    },
+
+    async xint_sentiment(args) {
+      return actionInfo("Sentiment requires XAI_API_KEY.", { note: "Sentiment requires XAI_API_KEY" });
     },
 
     async xint_cache_clear() {
