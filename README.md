@@ -512,9 +512,27 @@ Release report:
 - Embedded automatically in both GitHub release bodies (can disable with `--no-report-body`)
 - Disable with `--no-report`
 
+
+## Contributing
+
+Contributions welcome. Read the [contribution guidelines](CONTRIBUTING.md) first.
+
+## ❤️ Support the Project
+
+If you find this project useful, consider supporting my open-source work.
+
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-orange?logo=buymeacoffee)](https://buymeacoffee.com/nyk_builderz)
+
+**Solana donations**
+
+`BYLu8XD8hGDUtdRBWpGWu5HKoiPrWqCxYFSh4oxXuvPg`
+
 ## License
 
-[MIT](LICENSE) · [0xNyk](https://github.com/0xNyk)
+[![CC0](https://licensebuttons.net/p/zero/1.0/88x31.png)](https://creativecommons.org/publicdomain/zero/1.0/)
+
+To the extent possible under law, the authors have waived all copyright and
+related or neighboring rights to this work.
 
 ---
 
