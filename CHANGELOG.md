@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`reposts` command** — Look up who reposted a tweet (`GET /2/tweets/:id/retweeted_by`). Supports `--limit`, `--json` output.
+- **`users` command** — Search users by keyword (`GET /2/users/search`). Supports `--limit`, `--json` output.
+- **`completions` command** — Shell completions for bash, zsh, and fish.
+- **`connection_status` field** — Profile and diff output now shows follow/block/mute relationship status.
+- **`subscription_type` field** — Profile output now shows Premium/verified badge.
+- **`--vision` flag** on `x-search` — Enables `enable_image_understanding` for image analysis during search.
+- **`--exclude-domains` / `--allow-domains` flags** on `x-search` — Domain filtering via xAI search tools.
+- **Inline citations** — `x-search` and report output now includes source citations from xAI Responses API.
+- **403 tier handling** — Graceful error messages when blocks/follows endpoints are restricted by API tier.
+
+### Changed
+- **Default Grok model** — Switched from `grok-3-mini` to `grok-4-1-fast` across analyze, report, sentiment, and MCP tools ($0.20/$0.50 per 1M tokens — better price/performance).
+- **xAI cost rates reduced** — Updated cost tracking to reflect ~50% price drop on xAI tool invocations (grok_chat, grok_analyze, xai_x_search, xai_article).
+- **MCP tool descriptions** — Updated model references in all MCP tool schemas.
+- **SKILL.md** — Updated model defaults, cost table, fallback chain, added new commands.
+- **README.md** — Added reposts/users commands, updated model reference, removed duplicate TUI section.
+
 ## [3.1.0] (2026-02-15) — Agent Intelligence Update
 
 Major feature release focused on real-time intelligence, social graph tracking, AI-powered sentiment, and structured export formats. Designed to make xint the most capable X intelligence skill for AI agents.

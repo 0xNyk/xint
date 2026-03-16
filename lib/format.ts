@@ -4,6 +4,32 @@
 
 import type { Tweet, UrlEntity } from "./api";
 
+// --- Color support ---
+
+let _colorOverride: boolean | undefined;
+
+export function shouldColor(): boolean {
+  if (process.env.NO_COLOR !== undefined) return false;
+  if (_colorOverride !== undefined) return _colorOverride;
+  if (process.env.TERM === "dumb") return false;
+  return process.stdout.isTTY ?? false;
+}
+
+export function setColorOverride(enabled: boolean): void {
+  _colorOverride = enabled;
+}
+
+export function cyan(s: string): string { return shouldColor() ? `\x1b[36m${s}\x1b[0m` : s; }
+export function yellow(s: string): string { return shouldColor() ? `\x1b[33m${s}\x1b[0m` : s; }
+export function dim(s: string): string { return shouldColor() ? `\x1b[2m${s}\x1b[0m` : s; }
+export function bold(s: string): string { return shouldColor() ? `\x1b[1m${s}\x1b[0m` : s; }
+export function green(s: string): string { return shouldColor() ? `\x1b[32m${s}\x1b[0m` : s; }
+export function red(s: string): string { return shouldColor() ? `\x1b[31m${s}\x1b[0m` : s; }
+
+export function stripAnsi(s: string): string {
+  return s.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
 function compactNumber(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
@@ -55,7 +81,7 @@ export function formatTweetTelegram(t: Tweet, index?: number, opts?: { full?: bo
   // Clean up t.co links from text
   const cleanText = text.replace(/https:\/\/t\.co\/\S+/g, "").trim();
 
-  let out = `${prefix}@${getUsername(t)} (${engagement} · ${time})\n${cleanText}`;
+  let out = `${prefix}${cyan(`@${getUsername(t)}`)} (${yellow(engagement)} · ${dim(time)})\n${cleanText}`;
 
   if ((t.urls || []).length > 0) {
     const u = t.urls[0];
@@ -179,8 +205,16 @@ export function formatResearchMarkdown(
  */
 export function formatProfileTelegram(user: any, tweets: Tweet[]): string {
   const m = user.public_metrics || {};
-  let out = `👤 @${user.username} — ${user.name}\n`;
+  let badges = "";
+  if (user.subscription_type) {
+    const badge = user.subscription_type === "Premium+" ? "Premium+" : user.subscription_type === "Premium" ? "Premium" : user.subscription_type;
+    badges += ` [${badge}]`;
+  }
+  let out = `👤 @${user.username} — ${user.name}${badges}\n`;
   out += `${compactNumber(m.followers_count || 0)} followers · ${compactNumber(m.tweet_count || 0)} tweets\n`;
+  if (user.connection_status && user.connection_status.length > 0) {
+    out += `Connection: ${user.connection_status.join(", ")}\n`;
+  }
   if (user.description) {
     out += `${user.description.slice(0, 150)}\n`;
   }

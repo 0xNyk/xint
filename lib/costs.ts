@@ -74,6 +74,8 @@ export const COST_RATES: Record<string, { per_tweet: number; per_call: number }>
   stream_rules_delete: { per_tweet: 0, per_call: 0.01 },
   bookmark_save:   { per_tweet: 0, per_call: 0.01 },
   bookmark_remove: { per_tweet: 0, per_call: 0.01 },
+  timeline:        { per_tweet: 0.005, per_call: 0 },
+  analytics:       { per_tweet: 0, per_call: 0.01 },
   profile:         { per_tweet: 0.005, per_call: 0 },
   tweet:           { per_tweet: 0.005, per_call: 0 },
   trends:          { per_tweet: 0, per_call: 0.10 },
@@ -93,14 +95,16 @@ export const COST_RATES: Record<string, { per_tweet: number; per_call: number }>
   mutes_list:          { per_tweet: 0, per_call: 0.01 },
   mutes_add:           { per_tweet: 0, per_call: 0.01 },
   mutes_remove:        { per_tweet: 0, per_call: 0.01 },
+  reposts:         { per_tweet: 0, per_call: 0.01 },
+  users_search:    { per_tweet: 0, per_call: 0.01 },
   // xAI/Grok operations — per_call is a rough estimate; actual cost is
   // tracked via trackCostDirect() using real token usage from the API response.
-  grok_chat:           { per_tweet: 0, per_call: 0.001 },
-  grok_analyze:        { per_tweet: 0, per_call: 0.002 },
+  grok_chat:           { per_tweet: 0, per_call: 0.0005 },
+  grok_analyze:        { per_tweet: 0, per_call: 0.001 },
   grok_vision:         { per_tweet: 0, per_call: 0.005 },
   grok_sentiment:      { per_tweet: 0, per_call: 0.001 },
-  xai_article:         { per_tweet: 0, per_call: 0.003 },
-  xai_x_search:        { per_tweet: 0, per_call: 0.002 },
+  xai_article:         { per_tweet: 0, per_call: 0.0015 },
+  xai_x_search:        { per_tweet: 0, per_call: 0.001 },
 };
 
 const DEFAULT_BUDGET: BudgetConfig = {

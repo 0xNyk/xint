@@ -32,7 +32,7 @@ export interface GrokVisionOpts extends GrokOpts {
 }
 
 export interface GrokOpts {
-  model?: string;        // default "grok-3-mini"
+  model?: string;        // default "grok-4-1-fast"
   temperature?: number;  // default 0.7
   maxTokens?: number;    // default 1024
 }
@@ -56,15 +56,18 @@ interface XaiApiError {
 // ---------------------------------------------------------------------------
 
 const XAI_ENDPOINT = "https://api.x.ai/v1/chat/completions";
-const DEFAULT_MODEL = "grok-3-mini";
+const DEFAULT_MODEL = "grok-4-1-fast";
 const DEFAULT_TEMPERATURE = 0.7;
 const DEFAULT_MAX_TOKENS = 1024;
 
 // Rough pricing per 1M tokens (USD)
 const MODEL_PRICING: Record<string, { input: number; output: number }> = {
-  "grok-3":      { input: 3.00, output: 15.00 },
-  "grok-3-mini": { input: 0.10, output: 0.40 },
-  "grok-2":      { input: 2.00, output: 10.00 },
+  "grok-4":                  { input: 3.00, output: 15.00 },
+  "grok-4-1-fast":           { input: 0.20, output: 0.50 },
+  "grok-4-1-fast-reasoning": { input: 0.20, output: 0.50 },
+  "grok-3":                  { input: 3.00, output: 15.00 },
+  "grok-3-mini":             { input: 0.10, output: 0.40 },
+  "grok-2":                  { input: 2.00, output: 10.00 },
 };
 
 // ---------------------------------------------------------------------------
@@ -391,7 +394,7 @@ export async function cmdAnalyze(args: string[]): Promise<void> {
       case "--model":
         model = args[++i];
         if (!model) {
-          console.error("Error: --model requires a value (grok-3, grok-3-mini, grok-2, grok-2-vision)");
+          console.error("Error: --model requires a value (grok-4, grok-4-1-fast, grok-3, grok-3-mini, grok-2, grok-2-vision)");
           process.exit(1);
         }
         break;
@@ -536,7 +539,7 @@ Usage: xint analyze <query>           Ask Grok a question
        xint analyze --image <url>     Analyze an image with Grok Vision
 
 Options:
-  --model <name>     Model: grok-3, grok-3-mini (default), grok-2, grok-2-vision
+  --model <name>     Model: grok-4, grok-4-1-fast (default), grok-3, grok-3-mini, grok-2, grok-2-vision
   --tweets <file>    Path to JSON file containing tweets
   --pipe             Read tweet JSON from stdin
   --image, -i <url> Image URL to analyze with Grok Vision

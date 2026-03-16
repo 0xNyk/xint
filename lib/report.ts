@@ -121,7 +121,7 @@ export async function generateReport(query: string, opts: ReportOpts = {}): Prom
 
 Be concise and actionable.`;
 
-    const response = await analyzeQuery(prompt, tweetContext, { model: opts.model || "grok-3-mini" });
+    const response = await analyzeQuery(prompt, tweetContext, { model: opts.model || "grok-4-1-fast" });
     aiSummary = response.content;
   } catch (e: any) {
     aiSummary = `*AI summary unavailable: ${e.message}*`;
@@ -254,7 +254,7 @@ sentiment analysis, and AI-powered insights.
 Options:
   --accounts, -a <list>  Comma-separated accounts to track (e.g., @user1,@user2)
   --sentiment, -s        Include AI sentiment analysis
-  --model <name>         Grok model: grok-3, grok-3-mini (default), grok-2
+  --model <name>         Grok model: grok-4, grok-4-1-fast (default), grok-3, grok-3-mini
   --pages <N>            Search pages, 1-5 (default: 2)
   --save                 Save report to data/exports/
 

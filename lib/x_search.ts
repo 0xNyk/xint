@@ -29,17 +29,28 @@ export interface XSearchResult {
   timestamp?: string;
 }
 
+export interface Citation {
+  url: string;
+  title?: string;
+  start_index?: number;
+  end_index?: number;
+}
+
 export interface XSearchOptions {
   maxResults?: number;
   fromDate?: string;  // YYYY-MM-DD
   toDate?: string;   // YYYY-MM-DD
   model?: string;
   timeoutSeconds?: number;
+  excludedDomains?: string[];
+  allowedDomains?: string[];
+  vision?: boolean;
 }
 
 export interface XSearchResponse {
   results: XSearchResult[];
   summary: string;
+  citations: Citation[];
 }
 
 // ---------------------------------------------------------------------------
@@ -116,6 +127,15 @@ export async function xSearch(
   if (opts.toDate) {
     toolSpec["to_date"] = opts.toDate;
   }
+  if (opts.excludedDomains && opts.excludedDomains.length > 0) {
+    toolSpec["excluded_domains"] = opts.excludedDomains;
+  }
+  if (opts.allowedDomains && opts.allowedDomains.length > 0) {
+    toolSpec["allowed_domains"] = opts.allowedDomains;
+  }
+  if (opts.vision) {
+    toolSpec["enable_image_understanding"] = true;
+  }
 
   const body = {
     model,
@@ -159,7 +179,17 @@ export async function xSearch(
       output?: Array<{
         type?: string;
         results?: XSearchResult[];
-        content?: Array<{ type?: string; text?: string }>;
+        content?: Array<{
+          type?: string;
+          text?: string;
+          annotations?: Array<{
+            type?: string;
+            url?: string;
+            title?: string;
+            start_index?: number;
+            end_index?: number;
+          }>;
+        }>;
       }>;
       usage?: { input_tokens: number; output_tokens: number };
     };
@@ -174,8 +204,9 @@ export async function xSearch(
       trackCostDirect("xai_x_search", `${API_BASE}/responses`, 0.002);
     }
 
-    // Extract results and summary
+    // Extract results, summary, and citations
     const results: XSearchResult[] = [];
+    const citations: Citation[] = [];
     let summary = "";
 
     const output = data.output || [];
@@ -193,11 +224,23 @@ export async function xSearch(
           if (part.type === "output_text" && part.text) {
             summary = part.text.trim();
           }
+          if (part.annotations && Array.isArray(part.annotations)) {
+            for (const ann of part.annotations) {
+              if (ann.url) {
+                citations.push({
+                  url: ann.url,
+                  title: ann.title,
+                  start_index: ann.start_index,
+                  end_index: ann.end_index,
+                });
+              }
+            }
+          }
         }
       }
     }
 
-    return { results, summary };
+    return { results, summary, citations };
   } catch (err) {
     clearTimeout(timeoutId);
     throw err;
@@ -234,6 +277,15 @@ export async function cmdXSearch(args: string[]): Promise<void> {
       case "--to-date":
         opts.toDate = args[++i];
         break;
+      case "--exclude-domains":
+        opts.excludedDomains = (args[++i] || "").split(",").map(d => d.trim()).filter(Boolean);
+        break;
+      case "--allow-domains":
+        opts.allowedDomains = (args[++i] || "").split(",").map(d => d.trim()).filter(Boolean);
+        break;
+      case "--vision":
+        opts.vision = true;
+        break;
     }
   }
 
@@ -241,9 +293,12 @@ export async function cmdXSearch(args: string[]): Promise<void> {
     console.error("Usage: xint x_search <queries_file> <out_json> <out_md> [options]");
     console.error("Options:");
     console.error("  --max-results N    Max results per query (default: 10)");
-    console.error("  --model <name>    Model (default: grok-4)");
+    console.error("  --model <name>     Model (default: grok-4)");
     console.error("  --from-date YYYY-MM-DD");
     console.error("  --to-date YYYY-MM-DD");
+    console.error("  --exclude-domains  Comma-separated domains to exclude");
+    console.error("  --allow-domains    Comma-separated domains to allow");
+    console.error("  --vision           Enable image understanding");
     process.exit(1);
   }
 
@@ -274,6 +329,7 @@ export async function cmdXSearch(args: string[]): Promise<void> {
     query: string;
     results: XSearchResult[];
     summary: string;
+    citations: Citation[];
     error?: string;
   }> = [];
   let hadErrors = false;
@@ -282,8 +338,8 @@ export async function cmdXSearch(args: string[]): Promise<void> {
 
   for (const q of queries) {
     try {
-      const { results, summary } = await xSearch(q, opts);
-      perQuery.push({ query: q, results, summary });
+      const { results, summary, citations } = await xSearch(q, opts);
+      perQuery.push({ query: q, results, summary, citations });
       console.log(`  "${q}": ${results.length} results`);
     } catch (e: any) {
       hadErrors = true;
@@ -291,6 +347,7 @@ export async function cmdXSearch(args: string[]): Promise<void> {
         query: q,
         results: [],
         summary: "",
+        citations: [],
         error: e.message.slice(0, 500),
       });
       console.error(`  "${q}": ERROR - ${e.message.slice(0, 100)}`);
@@ -313,6 +370,7 @@ export async function cmdXSearch(args: string[]): Promise<void> {
         username: bestHandle(r),
         created_at: bestCreatedAt(r),
       })),
+      citations: pq.citations.length > 0 ? pq.citations : undefined,
       error: pq.error,
     })),
   };
@@ -355,6 +413,7 @@ function renderMarkdown(
     query: string;
     results: XSearchResult[];
     summary: string;
+    citations: Citation[];
     error?: string;
   }>
 ): string {
@@ -414,6 +473,26 @@ function renderMarkdown(
       } else {
         lines.push(`- ${prefix}${text}${meta}`);
       }
+    }
+    lines.push("");
+  }
+
+  // Collect all citations across queries
+  const allCitations = perQuery.flatMap((pq) => pq.citations);
+  if (allCitations.length > 0) {
+    const seen = new Set<string>();
+    const unique = allCitations.filter((c) => {
+      if (seen.has(c.url)) return false;
+      seen.add(c.url);
+      return true;
+    });
+
+    lines.push("## Citations");
+    lines.push("");
+    for (let i = 0; i < unique.length; i++) {
+      const c = unique[i];
+      const label = c.title || c.url;
+      lines.push(`${i + 1}. [${label}](${c.url})`);
     }
     lines.push("");
   }

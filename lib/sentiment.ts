@@ -76,7 +76,7 @@ export async function analyzeSentiment(
           },
         ],
         {
-          model: opts?.model || "grok-3-mini",
+          model: opts?.model || "grok-4-1-fast",
           temperature: 0.3,  // low temperature for consistent analysis
           maxTokens: opts?.maxTokens || 2048,
         },

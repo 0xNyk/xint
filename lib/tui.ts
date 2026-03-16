@@ -100,6 +100,8 @@ type UiState = {
   historyCategory?: string;
   historyCursor: number; // -1 = editing new entry, 0..N = browsing history from newest
   historyDraft?: string; // the value typed before browsing history
+  collapsedOutput: boolean;
+  outputSummary?: string;
 };
 
 type UiPhase = "IDLE" | "INPUT" | "RUNNING" | "DONE" | "ERROR";
@@ -359,6 +361,32 @@ function resolveUiPhase(session: SessionState, uiState: UiState): UiPhase {
   return "IDLE";
 }
 
+function renderKeybindingBar(phase: UiPhase, uiState: UiState, theme: Theme, cols: number): string {
+  const bindings: Array<[string, string]> = [];
+
+  if (phase === "INPUT") {
+    bindings.push(["Enter", "Submit"], ["Esc", "Cancel"], ["↑↓", "History"], ["Bksp", "Delete"]);
+  } else if (phase === "RUNNING") {
+    bindings.push(["PgUp/Dn", "Scroll"], ["e", "Stream"], ["f", "Filter"]);
+  } else if (phase === "ERROR" || phase === "DONE") {
+    bindings.push(["↑↓", "Move"], ["Enter", "Run"], ["Tab", "Views"], ["f", "Filter"], ["e", "Stream"], ["/", "Palette"], ["q", "Quit"]);
+  } else if (uiState.focusedPane === "right") {
+    bindings.push(["h", "Left"], ["PgUp/Dn", "Scroll"], ["f", "Filter"], ["e", "Stream"], ["Tab", "Views"], ["q", "Quit"]);
+  } else {
+    bindings.push(["↑↓", "Move"], ["l", "Right"], ["Enter", "Run"], ["Tab", "Views"], ["/", "Palette"], ["?", "Help"], ["q", "Quit"]);
+  }
+
+  if (uiState.tab === "output" && uiState.outputSummary && phase !== "INPUT" && phase !== "RUNNING") {
+    bindings.push(["Space", uiState.collapsedOutput ? "Expand" : "Collapse"]);
+  }
+
+  const parts = bindings.map(([key, desc]) =>
+    `${theme.accent}[${key}]${theme.reset} ${desc}`
+  );
+
+  return ` ${parts.join("  ")}`.padEnd(cols).slice(0, cols);
+}
+
 function buildContextualFooter(phase: UiPhase, uiState: UiState): string {
   if (phase === "INPUT") {
     return " Enter Submit • Esc Cancel • ↑↓ History • Backspace Delete ";
@@ -458,6 +486,16 @@ function outputViewLines(session: SessionState, uiState: UiState, viewport: numb
     lines.push("");
   }
 
+  // Collapsible output: show summary when collapsed
+  if (uiState.collapsedOutput && uiState.outputSummary) {
+    lines.push("");
+    const arrow = "\u25B8"; // right-pointing triangle
+    lines.push(`[${arrow}] ${uiState.outputSummary}  [Space to expand]`);
+    lines.push("");
+    lines.push(`${filtered.length} lines hidden`);
+    return lines;
+  }
+
   if (windowLines.length === 0) {
     lines.push("(no output lines for current filter)");
   } else {
@@ -539,8 +577,8 @@ function renderDoublePane(uiState: UiState, session: SessionState, columns: numb
 
   frame += `${leftBorderColor}${border.lj}${border.h.repeat(leftBoxWidth - 2)}${border.rj}${theme.reset} ${rightBorderColor}${border.lj}${border.h.repeat(rightBoxWidth - 2)}${border.rj}${theme.reset}\n`;
   frame += `${theme.border}${border.v}${theme.reset}${theme.accent}${buildStatusLine(session, uiState, Math.max(1, columns - 2))}${theme.reset}${theme.border}${border.v}${theme.reset}\n`;
-  const footer = buildContextualFooter(resolveUiPhase(session, uiState), uiState);
-  frame += `${theme.border}${border.v}${theme.reset}${padText(footer, Math.max(1, columns - 2))}${theme.border}${border.v}${theme.reset}\n`;
+  const footerBar = renderKeybindingBar(resolveUiPhase(session, uiState), uiState, theme, Math.max(1, columns - 2));
+  frame += `${theme.border}${border.v}${theme.reset}${footerBar}${theme.border}${border.v}${theme.reset}\n`;
   frame += `${theme.border}${border.bl}${border.h.repeat(Math.max(1, columns - 2))}${border.br}${theme.reset}`;
   writeFrame(frame.split("\n"));
 }
@@ -582,11 +620,11 @@ function renderSinglePane(uiState: UiState, session: SessionState, columns: numb
     frame += `${theme.border}${border.v}${theme.reset}${" ".repeat(width)}${theme.border}${border.v}${theme.reset}\n`;
   }
 
-  const footer = buildContextualFooter(resolveUiPhase(session, uiState), uiState);
+  const singleFooterBar = renderKeybindingBar(resolveUiPhase(session, uiState), uiState, theme, width);
   frame += `${theme.border}${border.lj}${border.h.repeat(width)}${border.rj}${theme.reset}\n`;
   frame += `${theme.border}${border.v}${theme.reset}${theme.accent}${buildStatusLine(session, uiState, width)}${theme.reset}${theme.border}${border.v}${theme.reset}\n`;
   frame += `${theme.border}${border.lj}${border.h.repeat(width)}${border.rj}${theme.reset}\n`;
-  frame += `${theme.border}${border.v}${theme.reset}${padText(footer, width)}${theme.border}${border.v}${theme.reset}\n`;
+  frame += `${theme.border}${border.v}${theme.reset}${singleFooterBar}${theme.border}${border.v}${theme.reset}\n`;
   frame += `${theme.border}${border.bl}${border.h.repeat(width)}${border.br}${theme.reset}`;
   writeFrame(frame.split("\n"));
 }
@@ -742,6 +780,10 @@ function applyMenuKeyEvent(
   if (str === "/") {
     uiState.tab = "output";
     return { resolve: "__palette__" };
+  }
+  if (key.name === "space" && uiState.tab === "output" && uiState.outputSummary) {
+    uiState.collapsedOutput = !uiState.collapsedOutput;
+    return {};
   }
 
   const normalized = normalizeInteractiveChoice(typeof str === "string" ? str : "");
@@ -1021,6 +1063,7 @@ export async function cmdTui(): Promise<void> {
     showStderr: false,
     focusedPane: "left",
     historyCursor: -1,
+    collapsedOutput: false,
   };
   const session: SessionState = {
     lastStdoutLines: [],
@@ -1251,6 +1294,11 @@ export async function cmdTui(): Promise<void> {
             session.lastStatus = "unknown option";
             break;
         }
+        // Set output summary for collapsible sections
+        if (session.lastCommand && session.lastOutputLines.length > 0) {
+          uiState.outputSummary = `${session.lastCommand} (${session.lastOutputLines.length} lines)`;
+          uiState.collapsedOutput = false;
+        }
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);
         session.lastStatus = `error: ${message}`;
@@ -1279,6 +1327,7 @@ export const __tuiTestUtils = {
   historyForCategory,
   activeLayout,
   buildContextualFooter,
+  renderKeybindingBar,
   buildContextHelp,
   buildTabLines,
   HISTORY_FILE,
