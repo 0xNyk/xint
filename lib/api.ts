@@ -80,6 +80,17 @@ export interface Tweet {
   hashtags: string[];
   tweet_url: string;
   article?: TweetArticle;
+  organic_metrics?: {
+    impression_count: number;
+    like_count: number;
+    reply_count: number;
+    retweet_count: number;
+  };
+  non_public_metrics?: {
+    impression_count: number;
+    url_link_clicks: number;
+    user_profile_clicks: number;
+  };
 }
 
 interface RawResponse {
@@ -144,6 +155,8 @@ export function parseTweets(raw: RawResponse): Tweet[] {
           entities: t.article.entities || {},
         },
       }),
+      ...(t.organic_metrics && { organic_metrics: t.organic_metrics }),
+      ...(t.non_public_metrics && { non_public_metrics: t.non_public_metrics }),
     };
   });
 }

@@ -108,6 +108,11 @@ import { consumeCommandFallback, recordCommandResult } from "./lib/reliability";
 import { cmdPackageApiServer } from "./lib/package_api_server";
 import { cmdBilling } from "./lib/billing";
 import { cmdTui } from "./lib/tui";
+import { cmdAnalytics } from "./lib/analytics";
+import { cmdTop } from "./lib/top";
+import { cmdGrowth } from "./lib/growth";
+import { cmdTiming } from "./lib/timing";
+import { cmdContentAudit } from "./lib/content_audit";
 
 const SKILL_DIR = import.meta.dir;
 const WATCHLIST_PATH = join(SKILL_DIR, "data", "watchlist.json");
@@ -299,6 +304,12 @@ const COMMAND_POLICY: Record<string, RequiredMode> = {
   users: "read_only",
   trends: "read_only",
   tr: "read_only",
+  analytics: "engagement",
+  top: "engagement",
+  growth: "engagement",
+  timing: "engagement",
+  "content-audit": "engagement",
+  audit: "engagement",
   analyze: "read_only",
   ask: "read_only",
   costs: "read_only",
@@ -1204,6 +1215,22 @@ async function main() {
       case "analyze":
       case "ask":
         await cmdAnalyze(args.slice(1));
+        break;
+      case "analytics":
+        await cmdAnalytics(args.slice(1));
+        break;
+      case "top":
+        await cmdTop(args.slice(1));
+        break;
+      case "growth":
+        await cmdGrowth(args.slice(1));
+        break;
+      case "timing":
+        await cmdTiming(args.slice(1));
+        break;
+      case "content-audit":
+      case "audit":
+        await cmdContentAudit(args.slice(1));
         break;
       case "costs":
       case "cost":

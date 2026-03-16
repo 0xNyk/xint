@@ -74,6 +74,8 @@ export const COST_RATES: Record<string, { per_tweet: number; per_call: number }>
   stream_rules_delete: { per_tweet: 0, per_call: 0.01 },
   bookmark_save:   { per_tweet: 0, per_call: 0.01 },
   bookmark_remove: { per_tweet: 0, per_call: 0.01 },
+  timeline:        { per_tweet: 0.005, per_call: 0 },
+  analytics:       { per_tweet: 0, per_call: 0.01 },
   profile:         { per_tweet: 0.005, per_call: 0 },
   tweet:           { per_tweet: 0.005, per_call: 0 },
   trends:          { per_tweet: 0, per_call: 0.10 },
