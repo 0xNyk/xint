@@ -105,6 +105,7 @@ export const COST_RATES: Record<string, { per_tweet: number; per_call: number }>
   grok_sentiment:      { per_tweet: 0, per_call: 0.001 },
   xai_article:         { per_tweet: 0, per_call: 0.0015 },
   xai_x_search:        { per_tweet: 0, per_call: 0.001 },
+  bookmark_kb_extract: { per_tweet: 0, per_call: 0.001 },
 };
 
 const DEFAULT_BUDGET: BudgetConfig = {
