@@ -149,7 +149,7 @@ export function parseTweets(raw: RawResponse): Tweet[] {
 }
 
 export const FIELDS =
-  "tweet.fields=created_at,public_metrics,author_id,conversation_id,entities,article&expansions=author_id&user.fields=username,name,public_metrics";
+  "tweet.fields=created_at,public_metrics,author_id,conversation_id,entities,article&expansions=author_id&user.fields=username,name,public_metrics,connection_status,subscription_type";
 
 /**
  * Parse a "since" value into an ISO 8601 timestamp.
@@ -262,6 +262,14 @@ export async function oauthGet(url: string, accessToken: string): Promise<RawRes
 
   if (res.status === 401) {
     throw new Error("OAuth token rejected (401). Try 'auth refresh' or re-run 'auth setup'.");
+  }
+
+  if (res.status === 403) {
+    const body = await res.text();
+    throw new Error(
+      `X API access forbidden (403). This endpoint requires pay-per-use or Enterprise access. ` +
+      `Your current X API tier may not include this endpoint. ${body.slice(0, 200)}`
+    );
   }
 
   if (res.status === 429) {
@@ -474,6 +482,13 @@ export async function oauthPost(url: string, accessToken: string, body?: any): P
   if (res.status === 401) {
     throw new Error("OAuth token rejected (401). Try 'auth refresh' or re-run 'auth setup'.");
   }
+  if (res.status === 403) {
+    const text = await res.text();
+    throw new Error(
+      `X API access forbidden (403). This endpoint requires pay-per-use or Enterprise access. ` +
+      `Your current X API tier may not include this endpoint. ${text.slice(0, 200)}`
+    );
+  }
   if (res.status === 429) {
     const reset = res.headers.get("x-rate-limit-reset");
     const waitSec = reset
@@ -512,6 +527,13 @@ export async function oauthPut(url: string, accessToken: string, body?: any): Pr
   if (res.status === 401) {
     throw new Error("OAuth token rejected (401). Try 'auth refresh' or re-run 'auth setup'.");
   }
+  if (res.status === 403) {
+    const text = await res.text();
+    throw new Error(
+      `X API access forbidden (403). This endpoint requires pay-per-use or Enterprise access. ` +
+      `Your current X API tier may not include this endpoint. ${text.slice(0, 200)}`
+    );
+  }
   if (res.status === 429) {
     const reset = res.headers.get("x-rate-limit-reset");
     const waitSec = reset
@@ -542,6 +564,13 @@ export async function oauthDelete(url: string, accessToken: string): Promise<any
 
   if (res.status === 401) {
     throw new Error("OAuth token rejected (401). Try 'auth refresh' or re-run 'auth setup'.");
+  }
+  if (res.status === 403) {
+    const text = await res.text();
+    throw new Error(
+      `X API access forbidden (403). This endpoint requires pay-per-use or Enterprise access. ` +
+      `Your current X API tier may not include this endpoint. ${text.slice(0, 200)}`
+    );
   }
   if (res.status === 429) {
     const reset = res.headers.get("x-rate-limit-reset");

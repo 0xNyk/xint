@@ -68,6 +68,8 @@ import { join } from "path";
 import * as api from "./lib/api";
 import * as cache from "./lib/cache";
 import * as fmt from "./lib/format";
+import { shouldColor, setColorOverride, bold, cyan, yellow, dim, green } from "./lib/format";
+import { createSpinner } from "./lib/spinner";
 import { authSetup, authStatus, authRefresh } from "./lib/oauth";
 import { cmdBookmarks } from "./lib/bookmarks";
 import {
@@ -93,6 +95,9 @@ import { cmdCollections } from "./lib/collections";
 import { cmdMCPServer } from "./lib/mcp";
 import { cmdLists } from "./lib/lists";
 import { cmdBlocks, cmdMutes } from "./lib/moderation";
+import { cmdReposts } from "./lib/reposts";
+import { cmdUsers } from "./lib/users";
+import { cmdCompletions } from "./lib/completions";
 import { cmdStream, cmdStreamRules } from "./lib/stream";
 import { cmdMedia } from "./lib/media";
 import { extractTweetId } from "./lib/media";
@@ -143,6 +148,22 @@ function parseGlobalPolicy(argv: string[]): PolicyMode {
 
 const args = process.argv.slice(2);
 const policyMode = parseGlobalPolicy(args);
+
+// Parse --color flag
+for (let i = args.length - 1; i >= 0; i--) {
+  if (args[i] === "--color" && args[i + 1]) {
+    const v = args[i + 1];
+    args.splice(i, 2);
+    if (v === "never") setColorOverride(false);
+    else if (v === "always") setColorOverride(true);
+  } else if (args[i]?.startsWith("--color=")) {
+    const v = args[i].split("=")[1];
+    args.splice(i, 1);
+    if (v === "never") setColorOverride(false);
+    else if (v === "always") setColorOverride(true);
+  }
+}
+
 const command = args[0];
 
 // --- Introspection: --describe and --schema ---
@@ -273,6 +294,9 @@ const COMMAND_POLICY: Record<string, RequiredMode> = {
   block: "moderation",
   mutes: "moderation",
   mute: "moderation",
+  reposts: "read_only",
+  retweets: "read_only",
+  users: "read_only",
   trends: "read_only",
   tr: "read_only",
   analyze: "read_only",
@@ -297,6 +321,7 @@ const COMMAND_POLICY: Record<string, RequiredMode> = {
   "pkg-api": "read_only",
   capabilities: "read_only",
   caps: "read_only",
+  completions: "read_only",
 };
 
 function enforcePolicyOrExit(cmd?: string): void {
@@ -431,15 +456,22 @@ async function cmdSearch() {
   if (cached) {
     tweets = cached;
     cacheHit = true;
-    console.error(`(cached — ${tweets.length} tweets)`);
+    console.error(`(cached \u2014 ${tweets.length} tweets)`);
   } else {
-    tweets = await api.search(query, {
-      pages,
-      sortOrder: sortOpt === "recent" ? "recency" : "relevancy",
-      since: since || undefined,
-      until: until || undefined,
-      fullArchive,
-    });
+    const spinner = createSpinner(`Searching "${query}"...`);
+    try {
+      tweets = await api.search(query, {
+        pages,
+        sortOrder: sortOpt === "recent" ? "recency" : "relevancy",
+        since: since || undefined,
+        until: until || undefined,
+        fullArchive,
+      });
+      spinner.done(`Found ${tweets.length} tweets`);
+    } catch (e) {
+      spinner.fail("Search failed");
+      throw e;
+    }
     cache.set(query, cacheParams, tweets);
   }
 
@@ -567,7 +599,7 @@ async function cmdThread() {
   trackCost("thread", "/2/tweets/search/recent", tweets.length);
 
   if (tweets.length === 0) {
-    console.log("No tweets found in thread.");
+    console.error("No tweets found in thread.");
     return;
   }
 
@@ -592,10 +624,20 @@ async function cmdProfile() {
   const includeReplies = getFlag("replies");
   const asJson = getFlag("json");
 
-  const { user, tweets } = await api.profile(username, {
-    count,
-    includeReplies,
-  });
+  const spinner = createSpinner(`Fetching profile @${username}...`);
+  let user: any, tweets: api.Tweet[];
+  try {
+    const result = await api.profile(username, {
+      count,
+      includeReplies,
+    });
+    user = result.user;
+    tweets = result.tweets;
+    spinner.done(`@${username}: ${tweets.length} tweets`);
+  } catch (e) {
+    spinner.fail(`Failed to fetch @${username}`);
+    throw e;
+  }
 
   // Track cost
   trackCost("profile", `/2/users/by/username/${username}`, tweets.length + 1);
@@ -631,7 +673,7 @@ async function cmdTweet() {
   trackCost("tweet", `/2/tweets/${tweetId}`, tweet ? 1 : 0);
 
   if (!tweet) {
-    console.log("Tweet not found.");
+    console.error("Tweet not found.");
     return;
   }
 
@@ -663,7 +705,7 @@ async function cmdWatchlist() {
       process.exit(1);
     }
     if (wl.accounts.find((a) => a.username.toLowerCase() === username.toLowerCase())) {
-      console.log(`@${username} already on watchlist.`);
+      console.error(`@${username} already on watchlist.`);
       return;
     }
     wl.accounts.push({
@@ -672,7 +714,7 @@ async function cmdWatchlist() {
       addedAt: new Date().toISOString(),
     });
     saveWatchlist(wl);
-    console.log(`Added @${username} to watchlist.${note ? ` (${note})` : ""}`);
+    console.error(`Added @${username} to watchlist.${note ? ` (${note})` : ""}`);
     return;
   }
 
@@ -697,10 +739,10 @@ async function cmdWatchlist() {
 
   if (sub === "check") {
     if (wl.accounts.length === 0) {
-      console.log("Watchlist is empty. Add accounts with: watchlist add <username>");
+      console.error("Watchlist is empty. Add accounts with: watchlist add <username>");
       return;
     }
-    console.log(`Checking ${wl.accounts.length} watchlist accounts...\n`);
+    console.error(`Checking ${wl.accounts.length} watchlist accounts...`);
     for (const acct of wl.accounts) {
       try {
         const { user, tweets } = await api.profile(acct.username, { count: 5 });
@@ -725,7 +767,7 @@ async function cmdWatchlist() {
 
   // Default: show watchlist
   if (wl.accounts.length === 0) {
-    console.log("Watchlist is empty. Add accounts with: watchlist add <username>");
+    console.error("Watchlist is empty. Add accounts with: watchlist add <username>");
     return;
   }
   console.log(`\uD83D\uDCCB Watchlist (${wl.accounts.length} accounts)\n`);
@@ -739,10 +781,10 @@ async function cmdCache() {
   const sub = args[1];
   if (sub === "clear") {
     const removed = cache.clear();
-    console.log(`Cleared ${removed} cached entries.`);
+    console.error(`Cleared ${removed} cached entries.`);
   } else {
     const removed = cache.prune();
-    console.log(`Pruned ${removed} expired entries.`);
+    console.error(`Pruned ${removed} expired entries.`);
   }
 }
 
@@ -764,32 +806,39 @@ async function cmdArticle() {
     
     // Check if it's an X tweet URL - extract linked article or inline X Article
     if (extractTweetId(url)) {
-      console.log("🔍 Fetching tweet to extract linked article...");
+      console.error("Fetching tweet to extract linked article...");
       const { fetchTweetForArticle } = await import("./lib/article");
       const { tweet, articleUrl, inlineArticle } = await fetchTweetForArticle(url);
 
       if (inlineArticle) {
-        console.log(`📄 Found X Article: ${inlineArticle.title}\n`);
+        console.error(`Found X Article: ${inlineArticle.title}`);
         article = inlineArticle;
       } else if (articleUrl) {
-        console.log(`📄 Found link: ${articleUrl}\n`);
+        console.error(`Found link: ${articleUrl}`);
         url = articleUrl;
       } else {
-        console.log("📝 No external link found in tweet.");
-        console.log(`   Tweet: ${tweet.text?.slice(0, 200)}...`);
-        console.log(`   URL: ${tweet.tweet_url}`);
+        console.error("No external link found in tweet.");
+        console.error(`   Tweet: ${tweet.text?.slice(0, 200)}...`);
+        console.error(`   URL: ${tweet.tweet_url}`);
         process.exit(0);
       }
     }
 
     // Fetch the article if not already resolved from inline X Article
     if (!article) {
-      article = await fetchArticle(url, { full, model });
+      const spinner = createSpinner(`Fetching article...`);
+      try {
+        article = await fetchArticle(url, { full, model });
+        spinner.done(`Fetched article: ${article.title || url}`);
+      } catch (e) {
+        spinner.fail("Failed to fetch article");
+        throw e;
+      }
     }
 
     // If AI prompt provided, analyze the article
     if (aiPrompt) {
-      console.log("🤖 Analyzing with Grok...\n");
+      console.error("Analyzing with Grok...");
       const { analyzeQuery } = await import("./lib/grok");
       const analysis = await analyzeQuery(aiPrompt, article.content, { model: model || undefined });
       console.log(`📝 Analysis: ${aiPrompt}\n`);
@@ -836,171 +885,174 @@ async function cmdAuth() {
 }
 
 function usage() {
-  console.log(`xint \u2014 X Intelligence CLI
+  const cmd = (name: string, desc: string) => `  ${green(name.padEnd(28))}${dim(desc)}`;
 
-Commands:
-  search <query> [options]    Search tweets (recent or full archive)
-  watch <query> [options]     Monitor X in real-time (polls on interval)
-  diff <@user> [options]      Track follower/following changes over time
-  report <topic> [options]    Generate intelligence report with AI analysis
-  thread <tweet_id>           Fetch full conversation thread
-  profile <username>          Recent tweets from a user
-  tweet <tweet_id>            Fetch a single tweet
-  article <url>               Fetch and read full article content
-  tui                         Interactive menu for common read-only workflows
-  capabilities                Print machine-readable capability manifest
-  bookmarks [options]         Fetch your bookmarked tweets (OAuth required)
-  likes [options]             Fetch your liked tweets (OAuth required)
-  like <tweet_id>             Like a tweet (OAuth required)
-  unlike <tweet_id>           Unlike a tweet (OAuth required)
-  following [username]        List accounts you follow (OAuth required)
-  follow <@user|id>           Follow a user (OAuth required)
-  unfollow <@user|id>         Unfollow a user (OAuth required)
-  media <tweet_id|url>        Download media from a tweet
-  stream [options]            Stream tweets using X filtered stream
-  stream-rules [subcmd]       Manage filtered stream rules
-  lists [subcmd]              Manage your X lists (OAuth required)
-  blocks [subcmd]             Manage blocked users (OAuth required)
-  mutes [subcmd]              Manage muted users (OAuth required)
-  bookmark <tweet_id>         Bookmark a tweet (OAuth required)
-  unbookmark <tweet_id>       Remove a bookmark (OAuth required)
-  trends [location] [opts]    Fetch trending topics
-  analyze <query>             Analyze with Grok AI (xAI)
-  costs [today|week|month]    View API cost tracking & budget
-  billing [status|usage]      View package API entitlements and usage
-  health [--json]             Runtime health, auth checks, and reliability stats
-  auth setup [--manual]       Set up OAuth 2.0 PKCE authentication
-  auth status                 Check OAuth token status
-  auth refresh                Manually refresh OAuth tokens
-  auth doctor [--json]        Validate auth credentials and scopes
-  watchlist                   Show watchlist
-  watchlist add <user> [note] Add user to watchlist
-  watchlist remove <user>     Remove user from watchlist
-  watchlist check             Check recent from all watchlist accounts
-  cache clear                 Clear search cache
-  --policy <mode>             Global policy: read_only | engagement | moderation
-  ai-search <file>           Search X via xAI's x_search tool (AI-powered)
-  collections <subcmd>       Manage xAI Collections Knowledge Base
-  mcp-server [options]        Start MCP server for AI agents (Claude, OpenAI)
-  package-api-server [opts]   Run local package API for Agent Memory v1
-  capabilities [--compact]    Print JSON capability/pricing/policy schema
+  console.log(`${bold("xint")} \u2014 X Intelligence CLI
 
-MCP Server options:
-  --sse                       Run in SSE mode (HTTP server)
-  --port=<N>                  Port for SSE mode (default: 3000)
-  --host=<addr>               Host bind for SSE mode (default: 127.0.0.1)
-  --auth-token=<token>        Require bearer auth for /mcp and /sse
-  --policy=<mode>             MCP policy mode: read_only|engagement|moderation
-  --no-budget-guard           Disable budget guard for tool calls
-  Run without flags for stdio mode (for Claude Code integration)
-  Env: XINT_MCP_HOST, XINT_MCP_AUTH_TOKEN
+${bold("Commands:")}
+${cmd("search <query> [options]", "Search tweets (recent or full archive)")}
+${cmd("watch <query> [options]", "Monitor X in real-time (polls on interval)")}
+${cmd("diff <@user> [options]", "Track follower/following changes over time")}
+${cmd("report <topic> [options]", "Generate intelligence report with AI analysis")}
+${cmd("thread <tweet_id>", "Fetch full conversation thread")}
+${cmd("profile <username>", "Recent tweets from a user")}
+${cmd("tweet <tweet_id>", "Fetch a single tweet")}
+${cmd("article <url>", "Fetch and read full article content")}
+${cmd("tui", "Interactive menu for common read-only workflows")}
+${cmd("capabilities", "Print machine-readable capability manifest")}
+${cmd("bookmarks [options]", "Fetch your bookmarked tweets (OAuth required)")}
+${cmd("likes [options]", "Fetch your liked tweets (OAuth required)")}
+${cmd("like <tweet_id>", "Like a tweet (OAuth required)")}
+${cmd("unlike <tweet_id>", "Unlike a tweet (OAuth required)")}
+${cmd("following [username]", "List accounts you follow (OAuth required)")}
+${cmd("follow <@user|id>", "Follow a user (OAuth required)")}
+${cmd("unfollow <@user|id>", "Unfollow a user (OAuth required)")}
+${cmd("media <tweet_id|url>", "Download media from a tweet")}
+${cmd("stream [options]", "Stream tweets using X filtered stream")}
+${cmd("stream-rules [subcmd]", "Manage filtered stream rules")}
+${cmd("lists [subcmd]", "Manage your X lists (OAuth required)")}
+${cmd("blocks [subcmd]", "Manage blocked users (OAuth required)")}
+${cmd("mutes [subcmd]", "Manage muted users (OAuth required)")}
+${cmd("bookmark <tweet_id>", "Bookmark a tweet (OAuth required)")}
+${cmd("unbookmark <tweet_id>", "Remove a bookmark (OAuth required)")}
+${cmd("trends [location] [opts]", "Fetch trending topics")}
+${cmd("analyze <query>", "Analyze with Grok AI (xAI)")}
+${cmd("costs [today|week|month]", "View API cost tracking & budget")}
+${cmd("billing [status|usage]", "View package API entitlements and usage")}
+${cmd("health [--json]", "Runtime health, auth checks, and reliability stats")}
+${cmd("auth setup [--manual]", "Set up OAuth 2.0 PKCE authentication")}
+${cmd("auth status", "Check OAuth token status")}
+${cmd("auth refresh", "Manually refresh OAuth tokens")}
+${cmd("auth doctor [--json]", "Validate auth credentials and scopes")}
+${cmd("watchlist", "Show watchlist")}
+${cmd("watchlist add <user> [note]", "Add user to watchlist")}
+${cmd("watchlist remove <user>", "Remove user from watchlist")}
+${cmd("watchlist check", "Check recent from all watchlist accounts")}
+${cmd("cache clear", "Clear search cache")}
+${cmd("--policy <mode>", "Global policy: read_only | engagement | moderation")}
+${cmd("--color <mode>", "Color output: auto | always | never")}
+${cmd("ai-search <file>", "Search X via xAI's x_search tool (AI-powered)")}
+${cmd("collections <subcmd>", "Manage xAI Collections Knowledge Base")}
+${cmd("mcp-server [options]", "Start MCP server for AI agents (Claude, OpenAI)")}
+${cmd("package-api-server [opts]", "Run local package API for Agent Memory v1")}
+${cmd("capabilities [--compact]", "Print JSON capability/pricing/policy schema")}
 
-Package API server options:
-  --port=<N>                  Port for local package API (default: 8080)
-  Set XINT_PACKAGE_API_KEY to require bearer auth for local calls
+${bold("MCP Server options:")}
+  ${dim("--sse                       Run in SSE mode (HTTP server)")}
+  ${dim("--port=<N>                  Port for SSE mode (default: 3000)")}
+  ${dim("--host=<addr>               Host bind for SSE mode (default: 127.0.0.1)")}
+  ${dim("--auth-token=<token>        Require bearer auth for /mcp and /sse")}
+  ${dim("--policy=<mode>             MCP policy mode: read_only|engagement|moderation")}
+  ${dim("--no-budget-guard           Disable budget guard for tool calls")}
+  ${dim("Run without flags for stdio mode (for Claude Code integration)")}
+  ${dim("Env: XINT_MCP_HOST, XINT_MCP_AUTH_TOKEN")}
 
-Search options:
-  --sort likes|impressions|retweets|recent   (default: likes)
-  --since 1h|3h|12h|1d|7d   Time filter (default: last 7 days)
-  --until <date>             End time filter (full-archive only)
-  --full                     Full-archive search (back to 2006, pay-per-use)
-  --min-likes N              Filter minimum likes
-  --min-impressions N        Filter minimum impressions
-  --pages N                  Pages to fetch, 1-5 (default: 1)
-  --limit N                  Results to display (default: 15)
-  --quick                    Quick mode: 1 page, max 10 results, auto noise
-                             filter, 1hr cache TTL, cost summary
-  --from <username>          Shorthand for from:username in query
-  --quality                  Pre-filter low-engagement tweets (min_faves:10)
-  --sentiment                AI sentiment analysis via Grok (per-tweet scores)
-  --no-replies               Exclude replies
-  --save                     Save to data/exports/
-  --json                     Raw JSON output
-  --jsonl                    JSONL output (one tweet per line, pipeable)
-  --csv                      CSV output (spreadsheet-friendly)
-  --markdown                 Markdown output
+${bold("Package API server options:")}
+  ${dim("--port=<N>                  Port for local package API (default: 8080)")}
+  ${dim("Set XINT_PACKAGE_API_KEY to require bearer auth for local calls")}
 
-Watch options:
-  --interval, -i <dur>       Polling interval: 30s, 5m, 1h (default: 5m)
-  --webhook <url>            POST new tweets to this URL as JSON (https:// required for remote hosts)
-  --limit <N>                Max tweets per poll (default: 10)
-  --since <dur>              Initial seed window (default: 1h)
-  --quiet, -q                Suppress per-poll headers
-  --jsonl                    Output JSONL for piping
+${bold("Search options:")}
+  ${dim("--sort likes|impressions|retweets|recent   (default: likes)")}
+  ${dim("--since 1h|3h|12h|1d|7d   Time filter (default: last 7 days)")}
+  ${dim("--until <date>             End time filter (full-archive only)")}
+  ${dim("--full                     Full-archive search (back to 2006, pay-per-use)")}
+  ${dim("--min-likes N              Filter minimum likes")}
+  ${dim("--min-impressions N        Filter minimum impressions")}
+  ${dim("--pages N                  Pages to fetch, 1-5 (default: 1)")}
+  ${dim("--limit N                  Results to display (default: 15)")}
+  ${dim("--quick                    Quick mode: 1 page, max 10 results, auto noise")}
+  ${dim("                           filter, 1hr cache TTL, cost summary")}
+  ${dim("--from <username>          Shorthand for from:username in query")}
+  ${dim("--quality                  Pre-filter low-engagement tweets (min_faves:10)")}
+  ${dim("--sentiment                AI sentiment analysis via Grok (per-tweet scores)")}
+  ${dim("--no-replies               Exclude replies")}
+  ${dim("--save                     Save to data/exports/")}
+  ${dim("--json                     Raw JSON output")}
+  ${dim("--jsonl                    JSONL output (one tweet per line, pipeable)")}
+  ${dim("--csv                      CSV output (spreadsheet-friendly)")}
+  ${dim("--markdown                 Markdown output")}
 
-Stream options:
-  --json                     Output JSON per stream event
-  --jsonl                    Output JSONL per stream event
-  --max-events N             Stop after N events
-  --backfill N               Backfill 1-5 minutes (X API option)
-  --webhook <url>            POST event payloads to URL (https:// required for remote hosts)
-  --quiet, -q                Suppress stream status logs
+${bold("Watch options:")}
+  ${dim("--interval, -i <dur>       Polling interval: 30s, 5m, 1h (default: 5m)")}
+  ${dim("--webhook <url>            POST new tweets to this URL as JSON (https:// required for remote hosts)")}
+  ${dim("--limit <N>                Max tweets per poll (default: 10)")}
+  ${dim("--since <dur>              Initial seed window (default: 1h)")}
+  ${dim("--quiet, -q                Suppress per-poll headers")}
+  ${dim("--jsonl                    Output JSONL for piping")}
 
-Stream rules options:
-  xint stream-rules [list|add|delete|clear]
-  Run 'xint stream-rules --help' for full examples
+${bold("Stream options:")}
+  ${dim("--json                     Output JSON per stream event")}
+  ${dim("--jsonl                    Output JSONL per stream event")}
+  ${dim("--max-events N             Stop after N events")}
+  ${dim("--backfill N               Backfill 1-5 minutes (X API option)")}
+  ${dim("--webhook <url>            POST event payloads to URL (https:// required for remote hosts)")}
+  ${dim("--quiet, -q                Suppress stream status logs")}
 
-Diff options:
-  --following                Track following list instead of followers
-  --history                  Show all saved snapshots
-  --pages <N>                Max pages to fetch (default: 5, ~5000 users)
-  --json                     Output as JSON
+${bold("Stream rules options:")}
+  ${dim("xint stream-rules [list|add|delete|clear]")}
+  ${dim("Run 'xint stream-rules --help' for full examples")}
 
-Report options:
-  --accounts, -a <list>      Comma-separated accounts (e.g., @user1,@user2)
-  --sentiment, -s            Include sentiment analysis
-  --model <name>             Grok model (default: grok-3-mini)
-  --pages <N>                Search pages (default: 2)
-  --save                     Save report to data/exports/
+${bold("Diff options:")}
+  ${dim("--following                Track following list instead of followers")}
+  ${dim("--history                  Show all saved snapshots")}
+  ${dim("--pages <N>                Max pages to fetch (default: 5, ~5000 users)")}
+  ${dim("--json                     Output as JSON")}
 
-Bookmark/Like options:
-  --limit N                  Max to display (default: 20)
-  --since <dur>              Filter by recency (1h, 1d, 7d, etc.)
-  --query <text>             Client-side text filter
-  --json                     Raw JSON output
-  --markdown                 Markdown output
-  --save                     Save to data/exports/
-  --no-cache                 Skip cache
-  follow/unfollow also accept: --json
+${bold("Report options:")}
+  ${dim("--accounts, -a <list>      Comma-separated accounts (e.g., @user1,@user2)")}
+  ${dim("--sentiment, -s            Include sentiment analysis")}
+  ${dim("--model <name>             Grok model (default: grok-3-mini)")}
+  ${dim("--pages <N>                Search pages (default: 2)")}
+  ${dim("--save                     Save report to data/exports/")}
 
-Media options:
-  --dir <path>               Output directory (default: data/media)
-  --max-items <N>            Download up to N media items
-  --name-template <tpl>      Filename template tokens:
-                             {tweet_id} {username} {index} {type}
-                             {media_key} {created_at} {ext}
-  --photos-only              Download photos only
-  --video-only               Download videos/GIFs only
-  --json                     Output JSON summary
+${bold("Bookmark/Like options:")}
+  ${dim("--limit N                  Max to display (default: 20)")}
+  ${dim("--since <dur>              Filter by recency (1h, 1d, 7d, etc.)")}
+  ${dim("--query <text>             Client-side text filter")}
+  ${dim("--json                     Raw JSON output")}
+  ${dim("--markdown                 Markdown output")}
+  ${dim("--save                     Save to data/exports/")}
+  ${dim("--no-cache                 Skip cache")}
+  ${dim("follow/unfollow also accept: --json")}
 
-Lists options:
-  xint lists [list|create|update|delete|members]
-  Run 'xint lists' for full subcommand help and examples
+${bold("Media options:")}
+  ${dim("--dir <path>               Output directory (default: data/media)")}
+  ${dim("--max-items <N>            Download up to N media items")}
+  ${dim("--name-template <tpl>      Filename template tokens:")}
+  ${dim("                           {tweet_id} {username} {index} {type}")}
+  ${dim("                           {media_key} {created_at} {ext}")}
+  ${dim("--photos-only              Download photos only")}
+  ${dim("--video-only               Download videos/GIFs only")}
+  ${dim("--json                     Output JSON summary")}
 
-Blocks/Mutes options:
-  xint blocks [list|add|remove]
-  xint mutes [list|add|remove]
-  Run 'xint blocks --help' or 'xint mutes --help' for examples
+${bold("Lists options:")}
+  ${dim("xint lists [list|create|update|delete|members]")}
+  ${dim("Run 'xint lists' for full subcommand help and examples")}
 
-Trends options:
-  [location]                 Location name or WOEID (default: worldwide)
-  --limit N                  Number of trends (default: 20)
-  --json                     Raw JSON output
-  --no-cache                 Skip cache
-  --locations                List known location names
+${bold("Blocks/Mutes options:")}
+  ${dim("xint blocks [list|add|remove]")}
+  ${dim("xint mutes [list|add|remove]")}
+  ${dim("Run 'xint blocks --help' or 'xint mutes --help' for examples")}
 
-Analyze options:
-  <query>                    Ask Grok a question
-  --tweets <file>            Analyze tweets from a JSON file
-  --pipe                     Read tweet JSON from stdin
-  --model <name>             grok-3, grok-3-mini (default), grok-2
-  --system <prompt>          Custom system prompt
+${bold("Trends options:")}
+  ${dim("[location]                 Location name or WOEID (default: worldwide)")}
+  ${dim("--limit N                  Number of trends (default: 20)")}
+  ${dim("--json                     Raw JSON output")}
+  ${dim("--no-cache                 Skip cache")}
+  ${dim("--locations                List known location names")}
 
-Costs options:
-  [today|week|month|all]     Period to show (default: today)
-  budget                     Show budget info
-  budget set <N>             Set daily budget limit in USD
-  reset                      Reset today's cost data`);
+${bold("Analyze options:")}
+  ${dim("<query>                    Ask Grok a question")}
+  ${dim("--tweets <file>            Analyze tweets from a JSON file")}
+  ${dim("--pipe                     Read tweet JSON from stdin")}
+  ${dim("--model <name>             grok-3, grok-3-mini (default), grok-2")}
+  ${dim("--system <prompt>          Custom system prompt")}
+
+${bold("Costs options:")}
+  ${dim("[today|week|month|all]     Period to show (default: today)")}
+  ${dim("budget                     Show budget info")}
+  ${dim("budget set <N>             Set daily budget limit in USD")}
+  ${dim("reset                      Reset today's cost data")}`);
 }
 
 // --- Main ---
@@ -1128,6 +1180,13 @@ async function main() {
       case "mute":
         await cmdMutes(args.slice(1));
         break;
+      case "reposts":
+      case "retweets":
+        await cmdReposts(args.slice(1));
+        break;
+      case "users":
+        await cmdUsers(args.slice(1));
+        break;
       case "bookmark":
       case "bm-save":
         if (dryRun) { console.log(JSON.stringify({ dry_run: true, action: "bookmark", tweet_id: args[1] })); break; }
@@ -1200,8 +1259,37 @@ async function main() {
       case "caps":
         cmdCapabilities(args.slice(1));
         break;
-      default:
-        usage();
+      case "completions":
+        cmdCompletions(args.slice(1));
+        break;
+      default: {
+        function levenshtein(a: string, b: string): number {
+          const m = a.length, n = b.length;
+          const d: number[][] = Array.from({ length: m + 1 }, (_, i) =>
+            Array.from({ length: n + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0))
+          );
+          for (let i = 1; i <= m; i++)
+            for (let j = 1; j <= n; j++)
+              d[i][j] = Math.min(
+                d[i - 1][j] + 1,
+                d[i][j - 1] + 1,
+                d[i - 1][j - 1] + (a[i - 1] !== b[j - 1] ? 1 : 0)
+              );
+          return d[m][n];
+        }
+
+        const knownCommands = Object.keys(COMMAND_POLICY).filter(k => !k.includes("-") || k === "ai-search" || k === "mcp-server");
+        const suggestions = knownCommands
+          .map(c => ({ cmd: c, dist: levenshtein(command, c) }))
+          .filter(s => s.dist <= 2 && s.dist > 0)
+          .sort((a, b) => a.dist - b.dist);
+
+        if (suggestions.length > 0) {
+          console.error(`Unknown command: "${command}"\n\nDid you mean?\n${suggestions.slice(0, 3).map(s => `  ${s.cmd}`).join("\n")}`);
+        } else {
+          usage();
+        }
+      }
     }
     if (metricCommand) {
       const fallback = consumeCommandFallback(metricCommand);

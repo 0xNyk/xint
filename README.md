@@ -83,6 +83,8 @@ bun install
 | Trends | `xint trends` |
 | AI Analyze | `xint analyze "best AI frameworks?"` |
 | Report | `xint report "crypto"` |
+| Reposts | `xint reposts <tweet_id>` |
+| User Search | `xint users "AI researcher"` |
 | Article | `xint article <url> --ai "summarize"` |
 | Capabilities | `xint capabilities --json` |
 | TUI | `xint tui` |
@@ -95,25 +97,6 @@ xint w "query"    # watch
 xint p @user     # profile
 xint tr           # trends
 xint bm           # bookmarks
-```
-
-### TUI Customization
-
-```bash
-# Built-in themes: classic | neon | minimal | ocean | amber
-XINT_TUI_THEME=ocean xint tui
-
-# Disable animated hero line
-XINT_TUI_HERO=0 xint tui
-
-# Disable icons in menu rows
-XINT_TUI_ICONS=0 xint tui
-
-# Force ASCII borders
-XINT_TUI_ASCII=1 xint tui
-
-# Optional theme token file
-XINT_TUI_THEME_FILE=./tui-theme.tokens.example.json xint tui
 ```
 
 ### TUI Customization
@@ -331,6 +314,22 @@ xint media 1900100012345678901 --photos-only
 xint media 1900100012345678901 --name-template "{username}-{created_at}-{index}"
 ```
 
+## Reposts
+
+```bash
+# See who reposted a tweet
+xint reposts <tweet_id>
+xint reposts <tweet_id> --limit 50 --json
+```
+
+## User Search
+
+```bash
+# Find users by keyword
+xint users "AI researcher"
+xint users "solana dev" --limit 10 --json
+```
+
 ## Intelligence Reports
 
 ```bash
@@ -356,7 +355,7 @@ xint article "https://example.com" --ai "Key takeaways?"
 xint article "https://x.com/user/status/123" --ai "Summarize"
 ```
 
-Uses xAI's `grok-4` model.
+Uses xAI's `grok-4` model. Default analysis model is now `grok-4-1-fast`.
 
 ## Use as AI Agent Skill
 

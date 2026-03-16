@@ -281,7 +281,7 @@ const TOOLS = [
       properties: {
         query: { type: "string", description: "Question or analysis request" },
         tweets: { type: "array", description: "Array of tweets to analyze (optional)" },
-        model: { type: "string", description: "Grok model (grok-3-mini, grok-3, grok-2)" },
+        model: { type: "string", description: "Grok model (grok-4-1-fast, grok-4, grok-3, grok-3-mini)" },
       },
       required: ["query"],
     },
@@ -444,7 +444,7 @@ const TOOLS = [
       properties: {
         topic: { type: "string", description: "Topic to research" },
         sentiment: { type: "boolean", description: "Include sentiment analysis (default: false)" },
-        model: { type: "string", description: "Grok model to use (default: grok-3-mini)" },
+        model: { type: "string", description: "Grok model to use (default: grok-4-1-fast)" },
         pages: { type: "number", description: "Search pages (default: 2)" },
       },
       required: ["topic"],

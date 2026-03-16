@@ -263,7 +263,7 @@ bun run xint.ts search "topic" --json | bun run xint.ts analyze --pipe  # Pipe s
 Uses xAI's Grok API (OpenAI-compatible). Requires `XAI_API_KEY` in env or `.env`.
 
 **Options:**
-- `--model <name>` — grok-3, grok-3-mini (default), grok-2
+- `--model <name>` — grok-4, grok-4-1-fast (default), grok-3, grok-3-mini, grok-2
 - `--tweets <file>` — path to JSON file containing tweets
 - `--pipe` — read tweet JSON from stdin
 
@@ -301,6 +301,34 @@ Env:
 Notes:
 - Never print keys.
 - Prefer `--dry-run` when wiring new cron jobs.
+
+### Reposts
+
+```bash
+bun run xint.ts reposts <tweet_id> [--limit N] [--json]
+```
+
+Look up users who reposted a specific tweet. Useful for engagement analysis and OSINT.
+
+**Examples:**
+```bash
+bun run xint.ts reposts 1234567890
+bun run xint.ts reposts 1234567890 --limit 50 --json
+```
+
+### User Search
+
+```bash
+bun run xint.ts users "<query>" [--limit N] [--json]
+```
+
+Search for X users by keyword. Uses the `/2/users/search` endpoint.
+
+**Examples:**
+```bash
+bun run xint.ts users "AI researcher"
+bun run xint.ts users "solana developer" --limit 10 --json
+```
 
 ### Watch (Real-Time Monitoring)
 
@@ -367,7 +395,7 @@ Generates comprehensive markdown intelligence reports combining search results, 
 **Options:**
 - `--sentiment` — include per-tweet sentiment analysis
 - `--accounts @user1,@user2` — include per-account activity sections
-- `--model <name>` — Grok model for AI summary (default: grok-3-mini)
+- `--model <name>` — Grok model for AI summary (default: grok-4-1-fast)
 - `--pages N` — search pages to fetch (default: 2)
 - `--save` — save report to `data/exports/`
 
@@ -573,7 +601,12 @@ All API calls are tracked in `data/api-costs.json`. The budget system warns when
 - Profile lookups: ~$0.005/lookup
 - Follower/following lookups: ~$0.01/page
 - Trends: ~$0.10/request
+- User search: ~$0.01/page
+- Reposts lookup: ~$0.01/page
 - Grok AI (sentiment/analyze/report): billed by xAI separately (not X API)
+  - grok-4-1-fast: $0.20/$0.50 per 1M tokens (default for analysis)
+  - grok-4: $3.00/$15.00 per 1M tokens (used for article/x-search)
+  - xAI tool invocations: max $5/1K calls (50% cheaper than 2025 rates)
 
 Default daily budget: $1.00 (adjustable via `costs budget set <N>`).
 
@@ -602,9 +635,11 @@ xint/
 │   ├── format.ts      (terminal, markdown, CSV, JSONL formatters)
 │   ├── grok.ts        (xAI Grok analysis integration)
 │   ├── oauth.ts       (OAuth 2.0 PKCE auth + token refresh)
+│   ├── reposts.ts     (repost/retweet lookup)
 │   ├── report.ts      (intelligence report generation)
 │   ├── sentiment.ts   (AI-powered sentiment analysis via Grok)
 │   ├── trends.ts      (trending topics — API + search fallback)
+│   ├── users.ts       (user search by keyword)
 │   └── watch.ts       (real-time monitoring with polling)
 ├── data/
 │   ├── api-costs.json  (cost tracking data)
@@ -676,10 +711,15 @@ The Package API provides agent memory package management:
 When a tool fails, try the next option:
 
 1. `xint_search` (X API v2, fast, real-time)
-2. `xint_xsearch` (xAI Grok search, AI-enhanced, requires XAI_API_KEY)
+2. `xint_xsearch` (xAI Grok search via grok-4-1-fast, AI-enhanced, requires XAI_API_KEY)
 3. Cached results from previous searches (15min TTL)
 
 For article fetching:
 1. `xint_article` with tweet URL (extracts inline X Article)
-2. `xint_article` with article URL (web fetch)
+2. `xint_article` with article URL (web fetch via grok-4)
 3. `xint_search` for tweets about the topic
+
+For user discovery:
+1. `xint_users` (search by keyword, new `/2/users/search` endpoint)
+2. `xint_search` with `from:` operator for known usernames
+3. `xint_reposts` to find engaged users on specific tweets
