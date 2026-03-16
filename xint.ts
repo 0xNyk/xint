@@ -113,6 +113,7 @@ import { cmdTop } from "./lib/top";
 import { cmdGrowth } from "./lib/growth";
 import { cmdTiming } from "./lib/timing";
 import { cmdContentAudit } from "./lib/content_audit";
+import { cmdBookmarkKb } from "./lib/bookmark_kb";
 
 const SKILL_DIR = import.meta.dir;
 const WATCHLIST_PATH = join(SKILL_DIR, "data", "watchlist.json");
@@ -310,6 +311,8 @@ const COMMAND_POLICY: Record<string, RequiredMode> = {
   timing: "engagement",
   "content-audit": "engagement",
   audit: "engagement",
+  "bookmark-kb": "engagement",
+  bkb: "engagement",
   analyze: "read_only",
   ask: "read_only",
   costs: "read_only",
@@ -1231,6 +1234,10 @@ async function main() {
       case "content-audit":
       case "audit":
         await cmdContentAudit(args.slice(1));
+        break;
+      case "bookmark-kb":
+      case "bkb":
+        await cmdBookmarkKb(args.slice(1));
         break;
       case "costs":
       case "cost":

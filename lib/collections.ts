@@ -49,30 +49,44 @@ export interface DocumentSearchResponse {
 const API_BASE = "https://api.x.ai/v1";
 const MGMT_BASE = "https://management-api.x.ai/v1";
 
+/** Normalize xAI API response to our Collection interface (handles collection_id/collection_name fields) */
+function normalizeCollection(raw: unknown): Collection {
+  const r = raw as Record<string, unknown>;
+  return {
+    id: (r.id || r.collection_id || "") as string,
+    name: (r.name || r.collection_name || "") as string,
+    description: (r.description || undefined) as string | undefined,
+    created_at: (r.created_at || undefined) as string | undefined,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Auth
 // ---------------------------------------------------------------------------
 
+function readEnvKey(varName: string): string | undefined {
+  if (process.env[varName]) return process.env[varName];
+  // Check .env.local first (overrides), then .env
+  for (const file of [".env.local", ".env"]) {
+    try {
+      const envFile = readFileSync(join(import.meta.dir, "..", file), "utf-8");
+      const re = new RegExp(`${varName}=["']?([^"'\\n]+)`);
+      const match = envFile.match(re);
+      if (match && !match[1].startsWith("your-")) return match[1];
+    } catch {}
+  }
+  return undefined;
+}
+
 function getXaiKey(): string {
-  if (process.env.XAI_API_KEY) return process.env.XAI_API_KEY;
-
-  try {
-    const envFile = readFileSync(join(import.meta.dir, "..", ".env"), "utf-8");
-    const match = envFile.match(/XAI_API_KEY=["']?([^"'\n]+)/);
-    if (match) return match[1];
-  } catch {}
-
+  const key = readEnvKey("XAI_API_KEY");
+  if (key) return key;
   throw new Error("XAI_API_KEY not found. Set it in your environment or in .env");
 }
 
 function getMgmtKey(): string {
-  if (process.env.XAI_MANAGEMENT_API_KEY) return process.env.XAI_MANAGEMENT_API_KEY;
-
-  try {
-    const envFile = readFileSync(join(import.meta.dir, "..", ".env"), "utf-8");
-    const match = envFile.match(/XAI_MANAGEMENT_API_KEY=["']?([^"'\n]+)/);
-    if (match) return match[1];
-  } catch {}
+  const key = readEnvKey("XAI_MANAGEMENT_API_KEY");
+  if (key) return key;
 
   throw new Error("XAI_MANAGEMENT_API_KEY not found. Set it in your environment or in .env");
 }
@@ -98,7 +112,9 @@ export async function collectionsList(): Promise<CollectionsListResponse> {
     throw new Error(`xAI API error (${res.status}): ${text.slice(0, 500)}`);
   }
 
-  return res.json() as Promise<CollectionsListResponse>;
+  const data = await res.json() as Record<string, unknown>;
+  const rawList = (data.data || data.collections || []) as unknown[];
+  return { data: rawList.map(normalizeCollection) };
 }
 
 /**
@@ -110,7 +126,7 @@ export async function collectionsCreate(
 ): Promise<Collection> {
   const key = getMgmtKey();
 
-  const body: Record<string, string> = { name };
+  const body: Record<string, string> = { collection_name: name };
   if (description) {
     body.description = description;
   }
@@ -129,8 +145,8 @@ export async function collectionsCreate(
     throw new Error(`xAI API error (${res.status}): ${text.slice(0, 500)}`);
   }
 
-  const data = await res.json() as { collection?: Collection; data?: Collection };
-  return data.collection || data.data as Collection;
+  const data = await res.json() as Record<string, unknown>;
+  return normalizeCollection(data.collection || data.data || data);
 }
 
 /**
@@ -154,7 +170,7 @@ export async function collectionsEnsure(
 }
 
 /**
- * Add a document to a collection.
+ * Add an already-uploaded document to a collection by ID.
  */
 export async function collectionsAddDocument(
   collectionId: string,
@@ -162,21 +178,65 @@ export async function collectionsAddDocument(
 ): Promise<unknown> {
   const key = getMgmtKey();
 
-  const res = await fetch(`${MGMT_BASE}/collections/${collectionId}/documents`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${key}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ document_id: documentId }),
-  });
+  // Management API requires multipart form for this endpoint
+  const proc = Bun.spawn([
+    "curl", "-s",
+    "-X", "POST",
+    `${MGMT_BASE}/collections/${collectionId}/documents`,
+    "-H", `Authorization: Bearer ${key}`,
+    "-F", `document_id=${documentId}`,
+  ], { stdout: "pipe", stderr: "pipe" });
 
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`xAI API error (${res.status}): ${text.slice(0, 500)}`);
+  const output = await new Response(proc.stdout).text();
+  await proc.exited;
+
+  if (!output.trim()) {
+    throw new Error("Empty response from xAI management API");
   }
 
-  return res.json();
+  const data = JSON.parse(output.trim());
+  if (data.code || data.message) {
+    throw new Error(`xAI API error: ${data.message || output.slice(0, 300)}`);
+  }
+
+  return data;
+}
+
+/**
+ * Upload a file directly to a collection (file + metadata in one call).
+ */
+export async function collectionsUploadDocument(
+  collectionId: string,
+  filePath: string,
+  name: string,
+  contentType: string = "text/markdown"
+): Promise<unknown> {
+  const key = getMgmtKey();
+
+  const proc = Bun.spawn([
+    "curl", "-s",
+    "-X", "POST",
+    `${MGMT_BASE}/collections/${collectionId}/documents`,
+    "-H", `Authorization: Bearer ${key}`,
+    "-F", `file=@${filePath}`,
+    "-F", `data=@${filePath}`,
+    "-F", `name=${name}`,
+    "-F", `content_type=${contentType}`,
+  ], { stdout: "pipe", stderr: "pipe" });
+
+  const output = await new Response(proc.stdout).text();
+  await proc.exited;
+
+  if (!output.trim()) {
+    throw new Error("Empty response from xAI management API");
+  }
+
+  const data = JSON.parse(output.trim());
+  if (data.code || data.message) {
+    throw new Error(`xAI API error: ${data.message || output.slice(0, 300)}`);
+  }
+
+  return data;
 }
 
 // ---------------------------------------------------------------------------
@@ -188,65 +248,35 @@ export async function collectionsAddDocument(
  */
 export async function filesUpload(
   filePath: string,
-  purpose: string = "kb_sync"
+  purpose: string = "assistants"
 ): Promise<FileUploadResponse> {
   const key = getXaiKey();
 
-  // Read file
-  const file = Bun.file(filePath);
-  const buffer = await file.arrayBuffer();
   const filename = filePath.split("/").pop() || "file";
 
-  // Determine content type
-  const ext = filename.split(".").pop()?.toLowerCase();
-  const contentType = {
-    md: "text/markdown",
-    txt: "text/plain",
-    json: "application/json",
-    jsonl: "application/x-ndjson",
-    csv: "text/csv",
-    pdf: "application/pdf",
-    html: "text/html",
-  }[ext || ""] || "application/octet-stream";
+  const proc = Bun.spawn([
+    "curl", "-s",
+    "-X", "POST",
+    `${API_BASE}/files`,
+    "-H", `Authorization: Bearer ${key}`,
+    "-F", `file=@${filePath};filename=${filename}`,
+    "-F", `purpose=${purpose}`,
+  ], { stdout: "pipe", stderr: "pipe" });
 
-  // Create multipart form data
-  const boundary = "xai_boundary_" + Math.random().toString(36).slice(2);
-  const parts: string[] = [];
+  const output = await new Response(proc.stdout).text();
+  await proc.exited;
 
-  // File part
-  parts.push(`--${boundary}`);
-  parts.push(`Content-Disposition: form-data; name="file"; filename="${filename}"`);
-  parts.push(`Content-Type: ${contentType}`);
-  parts.push("");
-  parts.push(new Uint8Array(buffer).toString());
-
-  // Purpose part
-  parts.push(`--${boundary}`);
-  parts.push('Content-Disposition: form-data; name="purpose"');
-  parts.push("");
-  parts.push(purpose);
-
-  parts.push(`--${boundary}--`);
-  parts.push("");
-
-  const body = parts.join("\r\n");
-
-  const res = await fetch(`${API_BASE}/files`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${key}`,
-      "Content-Type": `multipart/form-data; boundary=${boundary}`,
-    },
-    body,
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`xAI API error (${res.status}): ${text.slice(0, 500)}`);
+  if (!output.trim()) {
+    throw new Error("Empty response from xAI files API");
   }
 
-  const data = await res.json() as { data?: FileUploadResponse };
-  return data.data as FileUploadResponse;
+  const data = JSON.parse(output.trim()) as Record<string, unknown>;
+  if ((data as any).error || (data as any).code) {
+    throw new Error(`xAI API error: ${output.slice(0, 500)}`);
+  }
+
+  const result = (data.data || data) as FileUploadResponse;
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -266,6 +296,7 @@ export async function documentsSearch(
   const body: Record<string, unknown> = {
     query,
     top_k: topK,
+    source: "user_upload",
   };
 
   if (collectionIds.length > 0) {
