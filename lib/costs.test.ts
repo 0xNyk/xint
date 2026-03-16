@@ -168,7 +168,7 @@ describe("Cost Rates", () => {
   test("COST_RATES has xAI/Grok rates", () => {
     const { COST_RATES } = require("./costs");
 
-    expect(COST_RATES.grok_chat.per_call).toBe(0.001);
+    expect(COST_RATES.grok_chat.per_call).toBe(0.0005);
     expect(COST_RATES.grok_vision.per_call).toBe(0.005);
     expect(COST_RATES.xai_article.per_call).toBe(0.003);
     expect(COST_RATES.xai_x_search.per_call).toBe(0.002);
