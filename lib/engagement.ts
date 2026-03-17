@@ -472,6 +472,19 @@ export async function cmdUnbookmark(args: string[]): Promise<void> {
   }
 }
 
+export async function replyToTweet(
+  tweetId: string,
+  text: string,
+  accessToken: string,
+): Promise<{ id: string; text: string }> {
+  const url = `${BASE}/tweets`;
+  const result = await oauthPost(url, accessToken, {
+    text,
+    reply: { in_reply_to_tweet_id: tweetId },
+  });
+  return { id: result?.data?.id, text: result?.data?.text || text };
+}
+
 // ── Utility helpers ────────────────────────────────────────────────────
 
 function timeAgo(date: Date): string {
