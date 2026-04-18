@@ -553,3 +553,7 @@ related or neighboring rights to this work.
     <img src="https://api.star-history.com/svg?repos=0xNyk/xint&type=Date" alt="Star History" width="400">
   </a>
 </p>
+
+## Download History
+
+[![Download History](https://skill-history.com/chart/0xnyk/xint.svg)](https://skill-history.com/0xnyk/xint)
