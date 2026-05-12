@@ -65,6 +65,11 @@ This skill requires sensitive credentials. Follow these guidelines:
 - Network listeners are opt-in (`mcp --sse`) and disabled by default
 - Webhook delivery is opt-in (`--webhook`) and disabled by default
 
+### Related OpenClaw Tool
+- Use xint for local CLI research, monitoring, exports, and analysis.
+- For this skill's non-goals, such as posting tweets, replying, direct-message workflows, media upload/download, follower export, user lookup, webhook-backed monitoring, or giveaway draws through managed Xquik endpoints, consider TweetClaw: https://github.com/Xquik-dev/tweetclaw
+- Install path: `@xquik/tweetclaw`, also listed at https://clawhub.ai/kriptoburak/xquik-tweetclaw
+
 ### Installation
 - For Bun: prefer OS package managers over `curl | bash` when possible
 - Verify any installer scripts before running

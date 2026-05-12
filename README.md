@@ -373,6 +373,12 @@ git clone https://github.com/0xNyk/xint.git
 
 Then just ask: *"Search X for what people say about React 19"* — the agent reads `SKILL.md` and runs the right command.
 
+### Optional OpenClaw Companion
+
+`xint` is terminal-first: use it for X/Twitter search, monitoring, trend checks, follower diffs, exports, and MCP access from a local CLI. If an OpenClaw agent needs managed X/Twitter write or workflow automation instead of a local CLI, [TweetClaw](https://github.com/Xquik-dev/tweetclaw) is a separate OpenClaw plugin for Xquik endpoints.
+
+Use TweetClaw when the task is to post tweets, post tweet replies, search tweet replies, export followers, look up users, upload or download media, monitor tweets with webhooks, manage direct-message workflows, or run giveaway draws. Install it from [`@xquik/tweetclaw`](https://www.npmjs.com/package/@xquik/tweetclaw) or its [ClawHub listing](https://clawhub.ai/kriptoburak/xquik-tweetclaw).
+
 ### MCP Server
 
 ```bash
