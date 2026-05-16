@@ -14,8 +14,11 @@ data/watchlist.json
 data/api-costs.json
 data/reliability-metrics.json
 data/package-api-store.json
+data/credits.json
+data/bookmark-kb.json
 data/exports/*.md
 data/exports/*.json
+data/exports/bookmark-kb/
 data/snapshots/*.json
 reports/releases/*.md
 references/monetization-plan.md

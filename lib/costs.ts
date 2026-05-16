@@ -80,8 +80,11 @@ export const COST_RATES: Record<string, { per_tweet: number; per_call: number }>
   tweet:           { per_tweet: 0.005, per_call: 0 },
   trends:          { per_tweet: 0, per_call: 0.10 },
   thread:          { per_tweet: 0.005, per_call: 0 },
-  followers:       { per_tweet: 0, per_call: 0.01 },  // per user returned
-  following_list:  { per_tweet: 0, per_call: 0.01 },
+  // X API charges per user returned on followers/following endpoints,
+  // not per call. Reflect that in per_tweet so trackCost and dry-run
+  // both report the true cost ($0.01 × users) instead of a flat $0.01.
+  followers:       { per_tweet: 0.01, per_call: 0 },
+  following_list:  { per_tweet: 0.01, per_call: 0 },
   lists_list:      { per_tweet: 0, per_call: 0.01 },
   lists_create:    { per_tweet: 0, per_call: 0.01 },
   lists_update:    { per_tweet: 0, per_call: 0.01 },
@@ -96,6 +99,7 @@ export const COST_RATES: Record<string, { per_tweet: number; per_call: number }>
   mutes_add:           { per_tweet: 0, per_call: 0.01 },
   mutes_remove:        { per_tweet: 0, per_call: 0.01 },
   reposts:         { per_tweet: 0, per_call: 0.01 },
+  news_search:     { per_tweet: 0, per_call: 0.01 },
   users_search:    { per_tweet: 0, per_call: 0.01 },
   // xAI/Grok operations — per_call is a rough estimate; actual cost is
   // tracked via trackCostDirect() using real token usage from the API response.
@@ -340,6 +344,96 @@ function operationTable(byOp: Record<string, { calls: number; cost: number; twee
   return lines.join("\n");
 }
 
+// ---------------------------------------------------------------------------
+// Forecast
+// ---------------------------------------------------------------------------
+
+export interface MonthForecast {
+  // Total spent month-to-date.
+  mtd_usd: number;
+  // Projected end-of-month total. When MTD has <3 days of data, the projection
+  // is smoothed by also looking at the trailing 7-day average — single big
+  // days early in the month would otherwise create absurd projections.
+  projected_usd: number;
+  // Days elapsed (1-31) and days in the current month.
+  days_elapsed: number;
+  days_in_month: number;
+  // Top operations by spend this month.
+  top_operations: Array<{ operation: string; cost: number; share: number }>;
+  // The projection method actually used.
+  method: "mtd_extrapolation" | "7day_smoothed";
+  // Confidence note: "high" once we have ≥7 days of data this month.
+  confidence: "low" | "medium" | "high";
+}
+
+function daysInMonth(d: Date): number {
+  return new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+}
+
+export function forecastMonth(): MonthForecast {
+  const data = loadData();
+  const now = new Date();
+  const year = now.getUTCFullYear();
+  const month = now.getUTCMonth(); // 0-indexed
+  const monthFloor = `${year}-${String(month + 1).padStart(2, "0")}-01`;
+  const daysElapsed = now.getUTCDate();
+  const dim = daysInMonth(now);
+
+  // Entries this month
+  const monthDays = data.daily.filter((d) => d.date >= monthFloor);
+  const mtd = monthDays.reduce((s, d) => s + d.total_cost, 0);
+
+  // Per-operation spend
+  const byOp: Record<string, number> = {};
+  for (const d of monthDays) {
+    for (const [op, stats] of Object.entries(d.by_operation)) {
+      byOp[op] = (byOp[op] ?? 0) + stats.cost;
+    }
+  }
+  const totalForShares = Math.max(mtd, 1e-9);
+  const topOps = Object.entries(byOp)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([operation, cost]) => ({
+      operation,
+      cost,
+      share: cost / totalForShares,
+    }));
+
+  // Choose projection method.
+  // Early in the month (≤2 days), straight extrapolation is noisy — fall
+  // back to trailing-7-day average × days_in_month.
+  let projected: number;
+  let method: MonthForecast["method"];
+  if (daysElapsed >= 3) {
+    projected = (mtd / daysElapsed) * dim;
+    method = "mtd_extrapolation";
+  } else {
+    // Trailing 7 days from the entire daily log (not just this month)
+    const cutoff = new Date(now);
+    cutoff.setUTCDate(cutoff.getUTCDate() - 7);
+    const cutoffStr = cutoff.toISOString().slice(0, 10);
+    const last7 = data.daily.filter((d) => d.date >= cutoffStr);
+    const last7Total = last7.reduce((s, d) => s + d.total_cost, 0);
+    const avgPerDay = last7.length > 0 ? last7Total / Math.max(last7.length, 1) : 0;
+    projected = avgPerDay * dim;
+    method = "7day_smoothed";
+  }
+
+  const confidence: MonthForecast["confidence"] =
+    daysElapsed >= 7 ? "high" : daysElapsed >= 3 ? "medium" : "low";
+
+  return {
+    mtd_usd: Math.round(mtd * 1e4) / 1e4,
+    projected_usd: Math.round(projected * 1e4) / 1e4,
+    days_elapsed: daysElapsed,
+    days_in_month: dim,
+    top_operations: topOps,
+    method,
+    confidence,
+  };
+}
+
 export function getCostSummary(period: "today" | "week" | "month" | "all"): string {
   const data = loadData();
   const today = todayStr();
@@ -456,7 +550,33 @@ export function cmdCosts(args: string[]): void {
     return;
   }
 
+  if (sub === "forecast" || sub === "--forecast") {
+    const f = forecastMonth();
+    const asJson = args.includes("--json");
+    if (asJson) {
+      console.log(JSON.stringify(f, null, 2));
+      return;
+    }
+    console.log(`\n\u{1F4C8} Cost forecast — month-to-date and projection\n`);
+    console.log(`  Spent so far:  ${fmtUsd(f.mtd_usd)} (${f.days_elapsed} of ${f.days_in_month} days)`);
+    console.log(`  Projected:     ${fmtUsd(f.projected_usd)} by end of month`);
+    const methodLabel = f.method === "mtd_extrapolation"
+      ? "MTD × (days_in_month / days_elapsed)"
+      : "7-day trailing average × days_in_month (MTD too short)";
+    console.log(`  Method:        ${methodLabel}`);
+    console.log(`  Confidence:    ${f.confidence}${f.confidence === "low" ? " (≤2 days of data — re-check after a few more days)" : ""}`);
+    if (f.top_operations.length > 0) {
+      console.log(`\n  Top operations this month:`);
+      for (const op of f.top_operations) {
+        const sharePct = (op.share * 100).toFixed(0);
+        console.log(`    ${padEnd(op.operation + ":", 20)} ${padStart(fmtUsd(op.cost), 8)} (${sharePct}%)`);
+      }
+    }
+    console.log(``);
+    return;
+  }
+
   console.error(`Unknown costs subcommand: ${sub}`);
-  console.error("Usage: costs [today|week|month|all|budget [set N]|reset]");
+  console.error("Usage: costs [today|week|month|all|forecast|budget [set N]|reset]");
   process.exit(1);
 }

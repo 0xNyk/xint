@@ -275,17 +275,41 @@ const TOOLS = [
   },
   {
     name: "xint_analyze",
-    description: "Analyze tweets or answer questions using Grok AI",
+    description: "Analyze tweets or answer questions using Grok AI. Routes to the cheapest sufficient model by default (--budget cheap = grok-4-1-fast).",
     inputSchema: {
       type: "object",
       properties: {
         query: { type: "string", description: "Question or analysis request" },
         tweets: { type: "array", description: "Array of tweets to analyze (optional)" },
-        model: { type: "string", description: "Grok model (grok-4-1-fast, grok-4, grok-3, grok-3-mini)" },
+        model: { type: "string", description: "Explicit Grok model override (grok-4.3, grok-4-1-fast, grok-4.20-reasoning, ...)" },
+        budget: {
+          type: "string",
+          enum: ["cheap", "balanced", "max"],
+          description: "Budget tier — cheap (grok-4-1-fast, $0.20/$0.50/M), balanced (grok-4.3), max (grok-4.20-reasoning). Defaults to cheap.",
+        },
       },
       required: ["query"],
     },
     outputSchema: simpleOutput({ analysis: { type: "string" }, model: { type: "string" } }),
+  },
+  {
+    name: "xint_credits",
+    description: "Show Grok free-tier credit status (xAI console.x.ai). Use this when the user asks about their Grok costs, X Premium credits, or free-tier remaining. X Premium does NOT include API credits — this is the console.x.ai $25 signup + $150/mo data-share tier.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        setup: {
+          type: "boolean",
+          description: "Print the onboarding guide (Premium vs API distinction, how to get free credits).",
+        },
+      },
+    },
+    outputSchema: simpleOutput({
+      signup_credit_remaining: { type: "number" },
+      monthly_used: { type: "number" },
+      monthly_total: { type: "number" },
+      by_feature: { type: "object" },
+    }),
   },
   {
     name: "xint_trends",
@@ -487,6 +511,19 @@ const TOOLS = [
     },
     outputSchema: simpleOutput({ period: { type: "string" }, summary: { type: "object" }, budget: { type: "object" } }),
   },
+  {
+    name: "xint_news_search",
+    description: "Search news articles on X",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search query for news articles" },
+        limit: { type: "number", description: "Max results (default: 10)" },
+      },
+      required: ["query"],
+    },
+    outputSchema: simpleOutput({ articles: { type: "array", items: { type: "object" } } }),
+  },
 ];
 
 const TOOL_POLICY: Record<string, PolicyMode> = {
@@ -513,6 +550,8 @@ const TOOL_POLICY: Record<string, PolicyMode> = {
   xint_sentiment: "read_only",
   xint_cache_clear: "read_only",
   xint_costs: "read_only",
+  xint_credits: "read_only",
+  xint_news_search: "read_only",
 };
 
 const TOOL_BUDGET_GUARDED = new Set<string>([
@@ -535,6 +574,7 @@ const TOOL_BUDGET_GUARDED = new Set<string>([
   "xint_diff",
   "xint_report",
   "xint_sentiment",
+  "xint_news_search",
 ]);
 
 function policyRank(mode: PolicyMode): number {

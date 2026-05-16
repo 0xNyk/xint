@@ -113,9 +113,15 @@ export function parseTweets(raw: RawResponse): Tweet[] {
   return raw.data.map((t: any) => {
     const u = users[t.author_id] || {};
     const m = t.public_metrics || {};
+    // Prefer note_tweet.text for extended posts (280-25K chars)
+    let text = t.text;
+    const noteText = t.note_tweet?.text;
+    if (noteText && noteText.length > text.length) {
+      text = noteText;
+    }
     return {
       id: t.id,
-      text: t.text,
+      text,
       author_id: t.author_id,
       username: u.username || "?",
       name: u.name || "?",
@@ -161,8 +167,148 @@ export function parseTweets(raw: RawResponse): Tweet[] {
   });
 }
 
-export const FIELDS =
-  "tweet.fields=created_at,public_metrics,author_id,conversation_id,entities,article&expansions=author_id&user.fields=username,name,public_metrics,connection_status,subscription_type";
+// ---------------------------------------------------------------------------
+// Field profiles — credit-efficiency wins (added 2026-05)
+//
+// X API charges per tweet read, and bigger field expansions mean larger
+// response payloads (no direct cost) AND larger upstream processing
+// (indirect rate-limit pressure). More importantly, several fields we used
+// to always request — `article`, `note_tweet`, `entities`, `connection_status`,
+// `subscription_type` — go unused by most commands. Splitting into profiles:
+//
+//   MINIMAL_FIELDS:  text + author + metrics + created_at. Sufficient for
+//                    search, watch, trends, stream, and ~80% of analyze flows.
+//   STANDARD_FIELDS: + entities + conversation_id. Needed for thread reconstruction
+//                    and link extraction.
+//   EXTENDED_FIELDS: + article + note_tweet + connection_status + subscription_type.
+//                    Needed only when you specifically care about long-form posts,
+//                    relationship status, or premium badges.
+//
+// `FIELDS` is now a re-export of MINIMAL_FIELDS for backward compatibility —
+// existing callers automatically get the cheap default. Pass `--full-fields`
+// (via fieldsFor(true)) to opt into EXTENDED_FIELDS when needed.
+// ---------------------------------------------------------------------------
+
+// MINIMAL = the "search and render a tweet card" profile. Keeps entities
+// (URLs, mentions, hashtags) and conversation_id because parseTweets reads
+// them on every call — dropping them silently loses display data. Drops
+// article, note_tweet, connection_status, subscription_type which most
+// commands never read.
+//
+// STANDARD = MINIMAL + connection_status. Used by `profile`, `diff` —
+// commands that care about following/blocking relationships.
+//
+// EXTENDED = STANDARD + article + note_tweet + subscription_type. Required
+// for long-form posts (note_tweet > 280 chars), article previews, and the
+// Premium/verified badge. Used by `thread`, `tweet`, `report`, and any
+// command that explicitly opts in with --full-fields.
+// ---------------------------------------------------------------------------
+// Per-process user-record cache (2026-05-16)
+//
+// Several flows look up the same user by username multiple times within a
+// single command run: report iterates accounts then asks for tweets per
+// account; followers diff resolves username → ID before fetching; engagement
+// commands re-resolve before each action. Each lookup costs $0.005 and pays
+// for fields we already have in memory.
+//
+// This LRU is process-scoped — it doesn't persist between command runs and
+// doesn't need invalidation logic. Callers can pass `{ refresh: true }` to
+// force a re-fetch.
+// ---------------------------------------------------------------------------
+
+interface CachedUser {
+  id: string;
+  username: string;
+  name?: string;
+  description?: string;
+  public_metrics?: {
+    followers_count?: number;
+    following_count?: number;
+    tweet_count?: number;
+  };
+  created_at?: string;
+}
+
+const userCache: Map<string, CachedUser> = new Map();
+const USER_CACHE_MAX = 256; // capped so long-running MCP sessions don't grow unbounded
+
+function rememberUser(u: CachedUser): void {
+  // Cache by both id and lowercase username so subsequent lookups by either
+  // key get a hit.
+  userCache.set(u.id, u);
+  userCache.set(`@${u.username.toLowerCase()}`, u);
+  // Cheap LRU: when over the cap, drop oldest by insertion order.
+  while (userCache.size > USER_CACHE_MAX) {
+    const oldest = userCache.keys().next().value;
+    if (oldest === undefined) break;
+    userCache.delete(oldest);
+  }
+}
+
+/**
+ * Look up a user by username with per-process caching. Subsequent calls
+ * within the same run return the cached record without an API call.
+ *
+ * Pass `refresh: true` to force a live fetch (e.g. when stale data is a
+ * concern — `xint diff @user --fresh` already implies live fetches).
+ */
+export async function lookupUserByUsername(
+  username: string,
+  opts: { refresh?: boolean } = {},
+): Promise<CachedUser> {
+  const key = `@${username.replace(/^@/, "").toLowerCase()}`;
+  if (!opts.refresh) {
+    const hit = userCache.get(key);
+    if (hit) return hit;
+  }
+  const userUrl = `${BASE}/users/by/username/${encodeURIComponent(username.replace(/^@/, ""))}?user.fields=public_metrics,description,created_at`;
+  const raw = await apiGet(userUrl);
+  const data = (raw as any).data;
+  if (!data?.id) throw new Error(`User @${username} not found`);
+  const cached: CachedUser = {
+    id: data.id,
+    username: data.username,
+    name: data.name,
+    description: data.description,
+    public_metrics: data.public_metrics,
+    created_at: data.created_at,
+  };
+  rememberUser(cached);
+  return cached;
+}
+
+/** Test-only: clear the cache. Exported for unit tests; not used at runtime. */
+export function _resetUserCacheForTests(): void {
+  userCache.clear();
+}
+
+/** Test-only: peek at cache size. */
+export function _userCacheSizeForTests(): number {
+  return userCache.size;
+}
+
+export const MINIMAL_FIELDS =
+  "tweet.fields=created_at,public_metrics,author_id,conversation_id,entities&expansions=author_id&user.fields=username,name,public_metrics";
+
+export const STANDARD_FIELDS =
+  "tweet.fields=created_at,public_metrics,author_id,conversation_id,entities&expansions=author_id&user.fields=username,name,public_metrics,connection_status";
+
+export const EXTENDED_FIELDS =
+  "tweet.fields=created_at,public_metrics,author_id,conversation_id,entities,article,note_tweet&expansions=author_id&user.fields=username,name,public_metrics,connection_status,subscription_type";
+
+/** Resolve the field profile for a given command call. */
+export function fieldsFor(
+  level: "minimal" | "standard" | "extended" = "minimal",
+): string {
+  if (level === "extended") return EXTENDED_FIELDS;
+  if (level === "standard") return STANDARD_FIELDS;
+  return MINIMAL_FIELDS;
+}
+
+// Backwards-compatible alias. Used to be the kitchen-sink string; now defaults
+// to MINIMAL_FIELDS so unchanged call sites get the cheap profile automatically.
+// Commands that need extra fields must use fieldsFor("standard"|"extended").
+export const FIELDS = MINIMAL_FIELDS;
 
 /**
  * Parse a "since" value into an ISO 8601 timestamp.
@@ -315,6 +461,7 @@ export async function search(
     since?: string; // ISO 8601 timestamp or shorthand like "1h", "3h", "1d"
     until?: string; // ISO 8601 timestamp or shorthand (full-archive only)
     fullArchive?: boolean;
+    fieldLevel?: "minimal" | "standard" | "extended"; // payload profile; default minimal
   } = {}
 ): Promise<Tweet[]> {
   const isArchive = opts.fullArchive || false;
@@ -324,6 +471,7 @@ export async function search(
   const sort = opts.sortOrder || "relevancy";
   const encoded = encodeURIComponent(query);
   const endpoint = isArchive ? "tweets/search/all" : "tweets/search/recent";
+  const fields = fieldsFor(opts.fieldLevel);
 
   // Build time filters
   let timeFilter = "";
@@ -347,7 +495,7 @@ export async function search(
     const pagination = nextToken
       ? `&next_token=${nextToken}`
       : "";
-    const url = `${BASE}/${endpoint}?query=${encoded}&max_results=${maxResults}&${FIELDS}&sort_order=${sort}${timeFilter}${pagination}`;
+    const url = `${BASE}/${endpoint}?query=${encoded}&max_results=${maxResults}&${fields}&sort_order=${sort}${timeFilter}${pagination}`;
 
     const raw = await apiGet(url);
     const tweets = parseTweets(raw);
@@ -375,7 +523,9 @@ export async function thread(
 
   // Also fetch the root tweet
   try {
-    const rootUrl = `${BASE}/tweets/${conversationId}?${FIELDS}`;
+    // Thread root: single tweet, opt into extended fields so we get
+    // article preview + note_tweet expansion if present.
+    const rootUrl = `${BASE}/tweets/${conversationId}?${EXTENDED_FIELDS}`;
     const raw = await apiGet(rootUrl);
     const rootTweets = parseTweets({ ...raw, data: raw.data ? [raw.data] : (raw as any).id ? [raw] : [] });
     // Fix: single tweet lookup returns tweet at top level
@@ -399,15 +549,10 @@ export async function profile(
   username: string,
   opts: { count?: number; includeReplies?: boolean } = {}
 ): Promise<{ user: any; tweets: Tweet[] }> {
-  // First, look up user ID
-  const userUrl = `${BASE}/users/by/username/${username}?user.fields=public_metrics,description,created_at`;
-  const userData = await apiGet(userUrl);
-
-  if (!userData.data) {
-    throw new Error(`User @${username} not found`);
-  }
-
-  const user = (userData as any).data;
+  // Look up user via cache — saves a $0.005 call if we've seen this user
+  // already in the same process (common in report / engagement flows that
+  // iterate over a list of accounts).
+  const user = await lookupUserByUsername(username);
   await sleep(RATE_DELAY_MS);
 
   // Build search query
@@ -425,7 +570,10 @@ export async function profile(
  * Fetch a single tweet by ID.
  */
 export async function getTweet(tweetId: string): Promise<Tweet | null> {
-  const url = `${BASE}/tweets/${tweetId}?${FIELDS}`;
+  // Single-tweet fetch: marginal cost from the larger field set is
+  // ~$0.005 vs $0.005 (same per-tweet rate; payload is the only diff),
+  // so it's effectively free to ask for everything.
+  const url = `${BASE}/tweets/${tweetId}?${EXTENDED_FIELDS}`;
   const raw = await apiGet(url);
 
   // Single tweet returns { data: {...}, includes: {...} }

@@ -8,6 +8,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from "fs";
 import { join } from "path";
 import { BASE, FIELDS, sleep, oauthGet } from "./api";
+import { previewAndExit, estimateCost } from "./dryrun";
 import { getValidToken } from "./oauth";
 import { trackCost } from "./costs";
 
@@ -90,6 +91,29 @@ function listSnapshots(username: string, type: string): string[] {
     .filter(f => f.startsWith(prefix) && f.endsWith(".json"))
     .sort()
     .reverse();
+}
+
+// Followers/following are paid per-user ($0.01 each). A single diff against
+// 5000 followers costs $50. Re-running within 24h almost always returns the
+// same list — so we treat the most recent snapshot as a cache when it's
+// fresh enough. `--fresh` bypasses the cache to force a live fetch.
+const DEFAULT_SNAPSHOT_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+/**
+ * Return the most recent snapshot if it's still within the TTL window.
+ * Returns null if no snapshot exists or it's too old. Reading a snapshot
+ * costs $0 (local file); fetching costs ~$0.01 × followers count.
+ */
+export function loadFreshSnapshot(
+  username: string,
+  type: "followers" | "following",
+  ttlMs: number = DEFAULT_SNAPSHOT_TTL_MS,
+): Snapshot | null {
+  const snap = loadLatestSnapshot(username, type);
+  if (!snap) return null;
+  const age = Date.now() - new Date(snap.timestamp).getTime();
+  if (age > ttlMs) return null;
+  return snap;
 }
 
 // ---------------------------------------------------------------------------
@@ -236,6 +260,8 @@ export async function cmdDiff(args: string[]): Promise<void> {
   let showHistory = false;
   let asJson = false;
   let maxPages = 5;
+  let fresh = false;
+  let dryRun = false;
 
   const positional: string[] = [];
   let i = 0;
@@ -254,6 +280,13 @@ export async function cmdDiff(args: string[]): Promise<void> {
       case "--pages":
         maxPages = Math.min(parseInt(args[++i] || "5"), 15);
         break;
+      case "--fresh":
+        // Force a live fetch even if we have a recent snapshot.
+        fresh = true;
+        break;
+      case "--dry-run":
+        dryRun = true;
+        break;
       case "--help":
       case "-h":
         printDiffHelp();
@@ -268,6 +301,29 @@ export async function cmdDiff(args: string[]): Promise<void> {
   if (!username) {
     printDiffHelp();
     return;
+  }
+
+  // Dry-run preview — emit BEFORE OAuth so users can preview cost without
+  // a valid token. Max cost is maxPages × 1000 × $0.01 = up to $50.
+  if (dryRun) {
+    const maxUnits = maxPages * 1000;
+    const cached = !fresh && loadFreshSnapshot(username, type) !== null;
+    previewAndExit({
+      command: `diff @${username} (${type})`,
+      endpoint: `/2/users/{id}/${type}`,
+      units: maxUnits,
+      unitLabel: "users",
+      costUsd: estimateCost(type === "followers" ? "followers" : "following", maxUnits),
+      cachePredictedHit: cached,
+      cacheTtlMinutes: 24 * 60,
+      notes: [
+        cached
+          ? "Snapshot cache HIT predicted — real cost likely $0 (pass --fresh to bypass)."
+          : "No fresh snapshot found — full fetch will happen.",
+        "Max cost reached only if the account has 5000+ followers.",
+        "Requires OAuth at runtime (xint auth setup).",
+      ],
+    });
   }
 
   // Show snapshot history
@@ -300,20 +356,38 @@ export async function cmdDiff(args: string[]): Promise<void> {
     return; // unreachable, makes TS happy
   }
 
-  console.error(`Fetching ${type} for @${username}...`);
+  // Try to serve from cache first — a 5000-follower fetch costs ~$50, but
+  // followers rarely change minute-to-minute. Reuse a snapshot <24h old
+  // unless --fresh was passed.
+  let users: UserSnapshot[];
+  let cacheHit = false;
+  if (!fresh) {
+    const cached = loadFreshSnapshot(username, type);
+    if (cached) {
+      const ageHours = ((Date.now() - new Date(cached.timestamp).getTime()) / 3_600_000).toFixed(1);
+      console.error(`(cache hit — ${cached.users.length} ${type}, ${ageHours}h old; pass --fresh to force re-fetch)`);
+      users = cached.users;
+      cacheHit = true;
+    } else {
+      console.error(`Fetching ${type} for @${username}...`);
+      const userId = await lookupUserId(username, token);
+      trackCost("profile", `/2/users/by/username/${username}`, 1);
+      users = type === "followers"
+        ? await fetchFollowers(userId, token, maxPages)
+        : await fetchFollowing(userId, token, maxPages);
+      trackCost(type === "followers" ? "followers" : "following", `/2/users/${userId}/${type}`, users.length);
+    }
+  } else {
+    console.error(`Fetching ${type} for @${username} (--fresh, bypassing cache)...`);
+    const userId = await lookupUserId(username, token);
+    trackCost("profile", `/2/users/by/username/${username}`, 1);
+    users = type === "followers"
+      ? await fetchFollowers(userId, token, maxPages)
+      : await fetchFollowing(userId, token, maxPages);
+    trackCost(type === "followers" ? "followers" : "following", `/2/users/${userId}/${type}`, users.length);
+  }
 
-  // Look up user ID
-  const userId = await lookupUserId(username, token);
-  trackCost("profile", `/2/users/by/username/${username}`, 1);
-
-  // Fetch current list
-  const users = type === "followers"
-    ? await fetchFollowers(userId, token, maxPages)
-    : await fetchFollowing(userId, token, maxPages);
-
-  trackCost(type === "followers" ? "followers" : "following", `/2/users/${userId}/${type}`, users.length);
-
-  console.error(`Found ${users.length} ${type}`);
+  if (!cacheHit) console.error(`Found ${users.length} ${type}`);
 
   // Create current snapshot
   const current: Snapshot = {

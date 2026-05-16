@@ -5,6 +5,8 @@ import { fetchTrends, resolveWoeid } from "./trends";
 import { fetchArticle, fetchTweetForArticle } from "./article";
 import { extractTweetId } from "./media";
 import { actionInfo, actionSuccess, type ActionExecutionResult } from "./action_result";
+import { grokChat, resolveModel, type GrokOpts } from "./grok";
+import { summarize as summarizeCredits } from "./credits";
 
 export type ToolExecutionResult = ActionExecutionResult<unknown>;
 
@@ -103,8 +105,73 @@ export function createMcpToolHandlers(deps: MCPDispatcherDeps): Record<string, M
       return actionInfo("Collections requires XAI_API_KEY.", { note: "Collections requires XAI_API_KEY" });
     },
 
-    async xint_analyze() {
-      return actionInfo("Analyze requires XAI_API_KEY.", { note: "Analyze requires XAI_API_KEY" });
+    async xint_analyze(args) {
+      // Wire `budget` → model routing so agents can pick a tier without
+      // knowing model names. Default is cheap (grok-4-1-fast) — same as CLI.
+      const query = String(args.query || "");
+      if (!query) {
+        return actionInfo("xint_analyze requires a `query` argument.", { note: "missing query" });
+      }
+      const budget = typeof args.budget === "string" && ["cheap", "balanced", "max"].includes(args.budget)
+        ? (args.budget as "cheap" | "balanced" | "max")
+        : undefined;
+      const explicitModel = typeof args.model === "string" ? args.model : undefined;
+      const model = explicitModel ?? resolveModel(budget, false);
+      const opts: GrokOpts = { model };
+
+      try {
+        const resp = await grokChat(
+          [
+            { role: "system", content: "You are a social media analyst. Provide concise, actionable insights." },
+            { role: "user", content: query },
+          ],
+          opts,
+        );
+        return actionSuccess("Analyze completed.", {
+          analysis: resp.content,
+          model: resp.model,
+          usage: resp.usage,
+        });
+      } catch (e: any) {
+        // If XAI_API_KEY is missing the function throws — surface a
+        // structured hint instead of a bare exception. Agents reading this
+        // can call xint_credits next.
+        const msg = String(e?.message || e);
+        if (msg.includes("XAI_API_KEY")) {
+          return actionInfo(
+            "XAI_API_KEY not set. Run `xint credits --setup` for the onboarding guide.",
+            { note: "XAI_API_KEY not set", help: "xint_credits with {setup: true}" },
+          );
+        }
+        throw e;
+      }
+    },
+
+    async xint_credits(args) {
+      // Setup mode returns the human-readable guide; default returns a
+      // structured snapshot of free-tier burn.
+      if (args.setup === true) {
+        return actionInfo(
+          "Grok API credits — see https://console.x.ai for $25 signup + $150/mo data-share. X Premium does NOT include API credits.",
+          {
+            note: "Premium != API credits",
+            console: "https://console.x.ai",
+            free_tier_total_usd: 175,
+          },
+        );
+      }
+      const s = summarizeCredits();
+      const signup_remaining = Math.max(0, s.signup_credit_total - s.signup_credit_used);
+      return actionSuccess("Credits status.", {
+        signup_credit_remaining: signup_remaining,
+        signup_credit_total: s.signup_credit_total,
+        signup_expires_at: s.signup_expires_at,
+        monthly_used: s.monthly_used,
+        monthly_total: s.monthly_total,
+        monthly_resets_at: s.monthly_resets_at,
+        data_sharing: s.data_sharing,
+        by_feature: s.by_feature,
+      });
     },
 
     async xint_trends(args) {
@@ -262,6 +329,17 @@ export function createMcpToolHandlers(deps: MCPDispatcherDeps): Record<string, M
       const summary = getCostSummary(period as "today" | "week" | "month" | "all");
       const budget = checkBudget();
       return actionSuccess("Cost summary generated.", { period, summary, budget });
+    },
+
+    async xint_news_search(args) {
+      const { searchNews } = await import("./news");
+      const query = String(args.query || "");
+      const limit = Number(args.limit) || 10;
+      const articles = await searchNews(query, { limit });
+      const result = actionSuccess("News search completed.", articles);
+      result.pagination = { total: articles.length, returned: articles.length, has_more: false };
+      result.cost = articles.length * 0.01;
+      return result;
     },
   };
 }
