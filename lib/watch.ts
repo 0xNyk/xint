@@ -114,7 +114,12 @@ export async function watch(query: string, opts: WatchOpts): Promise<void> {
       const tweets = await api.search(query, {
         pages: 1,
         sortOrder: "recency",
-        since: opts.since || "1h",
+        // Seed window: how far back the FIRST poll looks. Default narrowed
+        // from 1h to 10m in 2026-05 — for a hot query, 1h could return 100+
+        // tweets just to deduplicate, costing $0.50 before any new content
+        // arrives. 10m is enough for normal cadence; pass --seed-window 1h
+        // (or --since) to restore old behavior for slow-moving topics.
+        since: opts.since || "10m",
       });
 
       // Track cost
@@ -249,6 +254,7 @@ export async function cmdWatch(args: string[]): Promise<void> {
         limit = parseInt(args[++i] || "10");
         break;
       case "--since":
+      case "--seed-window":
         since = args[++i];
         break;
       case "--quiet":
@@ -311,7 +317,7 @@ Options:
   --interval, -i <dur>   Polling interval: 30s, 5m, 1h (default: 5m)
   --webhook <url>        POST new tweets to this URL as JSON (https:// required)
   --limit <N>            Max tweets to show per poll (default: 10)
-  --since <dur>          Initial time window to seed from (default: 1h)
+  --since, --seed-window <dur>  Initial time window to seed from (default: 10m; widen for slow topics)
   --quiet, -q            Suppress per-poll headers
   --jsonl                Output JSONL (one tweet per line)
   --stream, -s           Output SSE (Server-Sent Events)

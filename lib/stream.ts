@@ -410,7 +410,11 @@ export async function cmdStreamRules(args: string[]): Promise<void> {
   }
 
   if (sub === "clear") {
+    // X API requires IDs to delete rules — no "delete all" endpoint exists.
+    // So `clear` is unavoidably 2 calls. We at least track both costs so
+    // the cost summary doesn't under-report by half.
     const rules = await listRules();
+    trackCost("stream_rules_list", "/2/tweets/search/stream/rules", 0);
     if (rules.length === 0) {
       console.log("No stream rules to clear.");
       return;

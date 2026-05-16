@@ -122,13 +122,29 @@ bun run xint.ts search "startup funding" --csv > funding.csv
 bun run xint.ts search "AI" --jsonl | jq 'select(.metrics.likes > 100)'
 ```
 
-### Profile
+### Profile — recent posts from someone else
 
 ```bash
 bun run xint.ts profile <username> [--count N] [--replies] [--json]
 ```
 
-Fetches recent tweets from a specific user (excludes replies by default).
+Fetches recent tweets from **a specific user** (excludes replies by default).
+Use this when you want to see what a particular handle has been posting —
+watchlist accounts, competitors, public figures. Requires only
+`X_BEARER_TOKEN` (no OAuth needed).
+
+> ⚠ **Disambiguation.** Three xint commands look similar but target
+> different accounts:
+>
+> | Command | Target | Auth | Purpose |
+> |---------|--------|------|---------|
+> | `xint profile <handle>` | someone else | bearer | recent posts from `<handle>` |
+> | `xint top` | **your own account** | OAuth | your best-performing posts (no `--from` flag) |
+> | `xint content-audit` | **your own account** | OAuth | AI-driven performance analysis of your posts |
+>
+> If an agent or user wants "top posts from @somebody else" they want
+> `xint profile @somebody --count 50` sorted by likes, not `xint top --from`
+> (the `--from` flag does not exist on `top`).
 
 ### Thread
 
@@ -255,16 +271,75 @@ bun run xint.ts search "topic" --json | bun run xint.ts analyze --pipe  # Pipe s
 Uses xAI's Grok API (OpenAI-compatible). Requires `XAI_API_KEY` in env or `.env`.
 
 **Options:**
-- `--model <name>` — grok-4, grok-4-1-fast (default), grok-3, grok-3-mini, grok-2
+- `--budget <tier>` — `cheap` (default, grok-4-1-fast, $0.20/$0.50 per M tokens) | `balanced` (grok-4.3, $1.25/$2.50) | `max` (grok-4.20-reasoning, $2/$6)
+- `--model <name>` — explicit override: grok-4.3, grok-4-1-fast, grok-4.20, grok-4.20-reasoning, grok-2-vision (retiring 2026-05-15)
 - `--tweets <file>` — path to JSON file containing tweets
 - `--pipe` — read tweet JSON from stdin
+- `--image <url>` — image input (auto-uses grok-4.3 vision)
 
 **Examples:**
 ```bash
 bun run xint.ts analyze "What are the top AI agent frameworks right now?"
 bun run xint.ts search "AI agents" --json | bun run xint.ts analyze --pipe "Which show product launches?"
-bun run xint.ts analyze --model grok-3 "Deep analysis of crypto market sentiment"
+bun run xint.ts analyze --budget balanced "Deep analysis of crypto market sentiment"
 ```
+
+### Grok Credits (Free Tier Onboarding)
+
+```bash
+bun run xint.ts credits                  # Show monthly burn rate and free-tier remaining
+bun run xint.ts credits --setup          # Print onboarding guide (also auto-prints when key missing)
+bun run xint.ts credits --data-sharing on|off   # Toggle data-share opt-in
+```
+
+**Important — quote this verbatim when users ask about X Premium and Grok:**
+
+> X Premium ($8/mo) and Premium+ ($40/mo) **do NOT include xAI API credits**.
+> They unlock the Grok *chatbot* on x.com — a separate product. There is no
+> documented OAuth path from x.com to api.x.ai for credit consumption.
+>
+> The actual free programmatic path is **console.x.ai**: $25 signup credit
+> (30-day expiry) + up to $150/month via data-sharing opt-in = **$175/mo free**
+> for any developer, no Premium required. Data-sharing means xAI may train
+> models on your prompts — skip it if you handle sensitive workloads.
+>
+> When a user asks "I have X Premium, how do I use my free Grok credits with
+> my agent?", direct them to:
+>   1. Sign up at https://console.x.ai (any email, no Premium needed)
+>   2. Generate an API key
+>   3. Decide on data-sharing (toggle with `xint credits --data-sharing on`)
+>   4. `export XAI_API_KEY=xai-...`
+>   5. xint defaults to `--budget cheap` (grok-4-1-fast) — ~$0.0003 per typical
+>      analyze call, so the free tier lasts a long time.
+
+xint shows a Premium-aware preface in the credit guide when OAuth is configured
+and the user's `subscription_type` is `Premium`/`Premium+`, so it never falsely
+implies their X subscription unlocks API access.
+
+**Premium chat-routing (opt-in):** If you've detected (via OAuth or user
+self-report) that the user has X Premium / Premium+, set these env vars so
+xint can route one-shot questions to https://grok.com (spending Premium UI
+allowance) and reserve API credits for automation:
+
+```bash
+export XINT_X_PREMIUM="Premium+"     # or "Premium" / "PremiumPlus"
+export XINT_PREMIUM_TIPS=1           # emit a tip on plain analyze queries
+```
+
+When both are set, `xint analyze "what's trending"` (no `--pipe`, no
+`--tweets`, no `--image`) prints a one-line tip to stderr:
+
+> 💡 Premium tip: you can paste this question into https://grok.com to spend your X Premium+ chat allowance instead of API credits.
+
+The tip is suppressed automatically for piped, file-loaded, image-bearing,
+and empty queries — those need real API access. JSON output on stdout stays
+clean because the tip is stderr-only.
+
+**Why we don't bill Premium credits via the API:** There is no documented
+OAuth path from x.com to api.x.ai. Consumer Grok and developer Grok are
+separate billing systems. Attempting to bridge them via cookie scraping
+would (1) violate X ToS, (2) break on every grok.com UI ship, (3) give
+users no programmatic quota counter. The tip is the honest middle ground.
 
 ## xAI X Search (No Cookies/GraphQL)
 

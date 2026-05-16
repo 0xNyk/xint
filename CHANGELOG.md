@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Forecast + user LRU (2026-05-16)
+- **`xint costs forecast`** — projects end-of-month spend from current MTD burn rate (or 7-day trailing average when MTD < 3 days). Shows top-3 expensive operations with share-of-spend percentages and a confidence note. `--json` for machine-readable output.
+- **Per-process user-record LRU** — `lookupUserByUsername()` caches user resolutions across calls within the same process. Wired into `api.profile()`. A `report` command that iterates 10 accounts now pays for 10 user lookups; a second pass within the same MCP session pays for 0. Pass `{refresh: true}` to bypass.
+
+### Tracked (no behavior change)
+- **`stream-rules clear`** now tracks the cost of both the list AND delete API calls instead of just the delete. The X API requires us to fetch IDs before deletion (no "delete all" endpoint), so 2 calls are unavoidable; we just stop under-reporting them.
+
+### Added — Cost preview + MCP exposure (2026-05-16)
+- **`--dry-run` flag** on `search` and `diff` — prints an estimated cost preview, cache-hit prediction, and endpoint info, then exits 0 without making any API call. Lets agents and users see what something will cost before paying. Dry-run output goes to stdout so it's machine-parseable.
+- **`xint_credits` MCP tool** — exposes Grok free-tier telemetry via MCP. Returns signup-credit remaining, monthly burn, by-feature breakdown. Pass `{setup: true}` for the Premium-vs-API onboarding guidance.
+- **`budget` parameter on `xint_analyze` MCP tool** — agents can pass `budget: "cheap"|"balanced"|"max"` to route through the same model-selection logic as the CLI without knowing model names.
+
+### Fixed
+- **Field-profile recalibration (2026-05-16)** — Initial `MINIMAL_FIELDS` dropped `entities` and `conversation_id`, silently losing URLs/hashtags/mentions/note_tweet expansion from `search` results because `parseTweets` reads them on every call. Recalibrated: MINIMAL now includes entities + conversation_id (display-essential), STANDARD adds connection_status (for relationship-aware commands), EXTENDED adds article + note_tweet + subscription_type. `thread` root fetch and `getTweet` now use EXTENDED_FIELDS so single-tweet lookups get the full picture (marginal cost is zero per the X API pricing model).
+- **Followers cost rate corrected** — `lib/costs.ts` had `followers` at `per_call: 0.01` (flat), but the X API charges per user returned. Changed to `per_tweet: 0.01` so `trackCost` and the new dry-run preview both report the actual cost ($0.01 × users), not a flat $0.01. A 3000-follower diff now correctly previews at $30 instead of $0.01.
+
+### Added — X API efficiency pass (2026-05-16)
+- **Field profiles (`MINIMAL_FIELDS` / `STANDARD_FIELDS` / `EXTENDED_FIELDS`)** — `lib/api.ts` now exports three field profiles. `FIELDS` is now an alias for `MINIMAL_FIELDS` so existing call sites get the cheap default automatically. Search accepts `fieldLevel?: "minimal" | "standard" | "extended"` and a `--full-fields` CLI flag for when extended data (article, note_tweet, Premium badges, connection_status) is actually needed downstream. Cuts payload size ~50% on most tweet reads.
+- **Followers snapshot cache (24h TTL)** — `lib/followers.ts` reuses the most recent snapshot when it's <24h old. A 5000-follower diff costs ~$50 fresh; a same-day repeat now costs $0. Pass `--fresh` to bypass.
+- **Watch seed-window narrowing** — `lib/watch.ts` first-poll seed default cut from 1h to 10m. For a hot query that's $0.10-0.30 less per `watch` startup. `--seed-window` is the new canonical flag name (alias for `--since`).
+- **Archive search confirmation gate** — `--full` / `--full-archive` now requires explicit `--confirm` and prints an estimated max-cost preview. Prevents accidental 2x-cost archive searches.
+
+### Added — Grok credit-aware agent mode (2026-05)
+- **`credits` command** — Grok free-tier telemetry. Tracks monthly burn against the xAI console.x.ai free tier ($25 signup + $150/mo data-share). Subcommands: `--setup` prints the onboarding guide, `--data-sharing on|off` toggles the bonus opt-in. Auto-runs when `analyze` is called without `XAI_API_KEY` (exits 0 so agents can read the guide).
+- **`--budget` flag on `analyze`** — Routes to the cheapest sufficient Grok model. `cheap` (default, grok-4-1-fast), `balanced` (grok-4.3), `max` (grok-4.20-reasoning). Image inputs auto-route to grok-4.3 (vision-capable).
+- **`cost_in_usd_ticks` tracking** — When xAI returns the new authoritative cost field in `usage`, we record that value instead of the local pricing estimate. Falls back to estimate for older keys.
+- **Premium-aware credit guide** — When OAuth is configured and the user has X Premium/Premium+, the guide explicitly acknowledges this and clarifies that Premium unlocks the Grok chatbot on x.com, not API access.
+- **Premium chat-routing tip** — For one-shot human questions (no pipe, no file, no image), Premium users can be tipped to paste the query into https://grok.com to spend their Premium chat allowance instead of API credits. Two opt-ins: `XINT_X_PREMIUM=Premium|Premium+|PremiumPlus` declares status (no API call needed); `XINT_PREMIUM_TIPS=1` enables the tip on `analyze` runs. Tip prints to stderr before the call so it doesn't pollute JSON output.
+- **SKILL.md credit guide section** — Verbatim quote block agents can use to onboard users to the free tier without falsely implying X Premium unlocks the API.
+
 ### Added
 - **`reposts` command** — Look up who reposted a tweet (`GET /2/tweets/:id/retweeted_by`). Supports `--limit`, `--json` output.
 - **`users` command** — Search users by keyword (`GET /2/users/search`). Supports `--limit`, `--json` output.
@@ -17,6 +47,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`--exclude-domains` / `--allow-domains` flags** on `x-search` — Domain filtering via xAI search tools.
 - **Inline citations** — `x-search` and report output now includes source citations from xAI Responses API.
 - **403 tier handling** — Graceful error messages when blocks/follows endpoints are restricted by API tier.
+
+### Changed — Grok credit-aware agent mode (2026-05)
+- **Grok model pricing table refreshed** — Added `grok-4.3` ($1.25/$2.50, 1M ctx) as the new flagship; added `grok-4.20`, `grok-4.20-reasoning`, `grok-4.20-non-reasoning`, `grok-4-1-fast-non-reasoning`. Retired-but-redirected models (`grok-4`, `grok-3*`, `grok-2*`, `grok-code-fast-1`, `grok-4.20-beta`) kept in the table for pricing lookup when xAI auto-redirects after 2026-05-15.
+- **Vision default switched to `grok-4.3`** — `grok-2-vision` retires 2026-05-15 (xAI auto-redirects to `grok-4.3`). We update the default explicitly so behavior is predictable.
+- **`--budget cheap` is the new agent default** — `grok-4-1-fast` selected unless `--model` or `--budget balanced|max` is passed. Image inputs override to `grok-4.3` automatically.
+- **402 error hint** — Payment-required errors now point to `xint credits` and console.x.ai instead of a generic "out of credits" message.
 
 ### Changed
 - **Default Grok model** — Switched from `grok-3-mini` to `grok-4-1-fast` across analyze, report, sentiment, and MCP tools ($0.20/$0.50 per 1M tokens — better price/performance).

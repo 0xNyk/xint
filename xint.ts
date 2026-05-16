@@ -36,6 +36,7 @@
  *   auth status                 Check OAuth token status
  *   auth refresh                Manually refresh OAuth tokens
  *   package-api-server [opts]   Start local package API server (dev)
+ *   news <query> [--limit N]     Search news articles
  *   cache clear                 Clear search cache
  *
  * Search options:
@@ -84,7 +85,9 @@ import {
 } from "./lib/engagement";
 import { cmdTrends } from "./lib/trends";
 import { cmdAnalyze } from "./lib/grok";
+import { cmdCredits } from "./lib/credits";
 import { cmdCosts, trackCost, checkBudget } from "./lib/costs";
+import { previewAndExit, estimateCost, hasDryRun } from "./lib/dryrun";
 import { cmdWatch } from "./lib/watch";
 import { cmdDiff } from "./lib/followers";
 import { analyzeSentiment, enrichTweets, computeStats, formatSentimentTweet, formatStats } from "./lib/sentiment";
@@ -115,6 +118,7 @@ import { cmdTiming } from "./lib/timing";
 import { cmdContentAudit } from "./lib/content_audit";
 import { cmdBookmarkKb } from "./lib/bookmark_kb";
 import { cmdEngage } from "./lib/engage";
+import { cmdNews } from "./lib/news";
 
 const SKILL_DIR = import.meta.dir;
 const WATCHLIST_PATH = join(SKILL_DIR, "data", "watchlist.json");
@@ -172,6 +176,10 @@ for (let i = args.length - 1; i >= 0; i--) {
 }
 
 const command = args[0];
+
+// Hoisted dry-run state — set by the top-level dispatcher, read by individual
+// command handlers. See cmdSearch / cmdDiff / etc.
+let globalDryRun = false;
 
 // --- Introspection: --describe and --schema ---
 // Import TOOLS from mcp.ts for introspection (lazy to avoid circular deps)
@@ -316,6 +324,8 @@ const COMMAND_POLICY: Record<string, RequiredMode> = {
   bkb: "engagement",
   engage: "engagement",
   eg: "engagement",
+  news: "read_only",
+  n: "read_only",
   analyze: "read_only",
   ask: "read_only",
   costs: "read_only",
@@ -410,6 +420,10 @@ function warnIfOverBudget(): void {
 async function cmdSearch() {
   const startedAtMs = Date.now();
   // Parse new flags first (before getOpt consumes positional args)
+  // NOTE: --dry-run is consumed at the top-level switch dispatcher (line ~1237)
+  // for mutation commands, so by the time we get here, getFlag won't find it
+  // in `args`. Read the hoisted module-level `globalDryRun` instead.
+  const dryRun = globalDryRun;
   const quick = getFlag("quick");
   const quality = getFlag("quality");
   const fromUser = getOpt("from");
@@ -421,7 +435,9 @@ async function cmdSearch() {
   let limit = parseInt(getOpt("limit") || "15");
   const since = getOpt("since");
   const until = getOpt("until");
-  const fullArchive = getFlag("full");
+  const fullArchive = getFlag("full") || getFlag("full-archive");
+  const fullFields = getFlag("full-fields");
+  const confirmArchive = getFlag("confirm");
   const noReplies = getFlag("no-replies");
   const noRetweets = getFlag("no-retweets");
   const save = getFlag("save");
@@ -461,6 +477,41 @@ async function cmdSearch() {
     query += " -is:reply";
   }
 
+  // Dry-run preview — print estimated cost and exit before any API call.
+  if (dryRun) {
+    const perPage = fullArchive ? 500 : 100;
+    const units = pages * perPage;
+    const op = fullArchive ? "search_archive" : "search";
+    const endpoint = fullArchive ? "/2/tweets/search/all" : "/2/tweets/search/recent";
+    const cost = estimateCost(op, units);
+    previewAndExit({
+      command: `search "${query}"`,
+      endpoint,
+      units,
+      unitLabel: "tweets",
+      costUsd: cost,
+      cachePredictedHit: !!cache.get(query, `sort=${sortOpt}&pages=${pages}&since=${since || "7d"}`, quick ? 3_600_000 : 900_000),
+      cacheTtlMinutes: quick ? 60 : 15,
+      notes: fullArchive
+        ? ["Full-archive search: 2x cost; requires --confirm to actually run."]
+        : [],
+    });
+  }
+
+  // Archive search confirmation gate — full-archive is 2x cost of recent
+  // ($0.01/tweet vs $0.005) AND fetches up to 500 tweets per page (vs 100).
+  // Easy to invoke accidentally, so require explicit --confirm.
+  if (fullArchive && !confirmArchive) {
+    const estPerPage = 500;
+    const estCost = pages * estPerPage * 0.01;
+    console.error(
+      `\n⚠  Full-archive search is 2x the cost of recent search.\n` +
+      `   Estimated max cost: ~$${estCost.toFixed(2)} (${pages} page${pages === 1 ? "" : "s"} × ${estPerPage} tweets × $0.01).\n` +
+      `   Re-run with --confirm to proceed, or drop --full to use recent search instead.\n`
+    );
+    process.exit(2);
+  }
+
   // Cache TTL: 1hr for quick mode, 15min default
   const cacheTtlMs = quick ? 3_600_000 : 900_000;
 
@@ -483,6 +534,7 @@ async function cmdSearch() {
         since: since || undefined,
         until: until || undefined,
         fullArchive,
+        fieldLevel: fullFields ? "extended" : "minimal",
       });
       spinner.done(`Found ${tweets.length} tweets`);
     } catch (e) {
@@ -610,6 +662,8 @@ async function cmdThread() {
   }
 
   const pages = Math.min(parseInt(getOpt("pages") || "2"), 5);
+  const doMarkdown = getFlag("markdown");
+  const doUnroll = doMarkdown || getFlag("unroll");
   const tweets = await api.thread(tweetId, { pages });
 
   // Track cost
@@ -620,10 +674,67 @@ async function cmdThread() {
     return;
   }
 
-  console.log(`\uD83E\uDDF5 Thread (${tweets.length} tweets)\n`);
-  for (const t of tweets) {
-    console.log(fmt.formatTweetTelegram(t, undefined, { full: true }));
-    console.log();
+  if (doUnroll) {
+    const author = tweets[0]?.username || "unknown";
+    const date = tweets[0]?.created_at
+      ? new Date(tweets[0].created_at).toLocaleDateString("en-US", {
+          year: "numeric",
+          month: "long",
+          day: "numeric",
+        })
+      : "Unknown date";
+
+    // Clean up each tweet's text
+    const cleaned = tweets.map((t) => {
+      let text = t.text;
+      // Remove thread numbering like "1/" "2." "3/10" etc.
+      text = text.replace(/^\d+[\/\.]\s*(\d+\s*[\/\.]?\s*)?/, "");
+      // Remove self-reply artifacts (@username at start when replying to self)
+      text = text.replace(new RegExp(`^@${author}\\s+`, "i"), "");
+      return text.trim();
+    });
+
+    if (doMarkdown) {
+      // Collect all unique URLs from the thread
+      const allUrls: { url: string; title?: string }[] = [];
+      for (const t of tweets) {
+        for (const u of t.urls || []) {
+          if (!allUrls.some((existing) => existing.url === u.url)) {
+            allUrls.push({ url: u.url, title: u.title });
+          }
+        }
+      }
+
+      // Compute total engagement
+      const totalLikes = tweets.reduce((s, t) => s + (t.metrics?.likes || 0), 0);
+      const totalRetweets = tweets.reduce((s, t) => s + (t.metrics?.retweets || 0), 0);
+      const totalReplies = tweets.reduce((s, t) => s + (t.metrics?.replies || 0), 0);
+
+      let md = `# Thread by @${author}\n\n`;
+      md += `*Published: ${date}*\n\n`;
+      md += cleaned.join("\n\n") + "\n\n";
+
+      if (allUrls.length > 0) {
+        md += "## Links\n\n";
+        for (const u of allUrls) {
+          md += u.title ? `- [${u.title}](${u.url})\n` : `- <${u.url}>\n`;
+        }
+        md += "\n";
+      }
+
+      md += `*${tweets.length} tweets | ${totalLikes} likes | ${totalRetweets} retweets | ${totalReplies} replies*\n\n`;
+      md += "---\n";
+      console.log(md);
+    } else {
+      // Plain unrolled text
+      console.log(cleaned.join("\n\n"));
+    }
+  } else {
+    console.log(`\uD83E\uDDF5 Thread (${tweets.length} tweets)\n`);
+    for (const t of tweets) {
+      console.log(fmt.formatTweetTelegram(t, undefined, { full: true }));
+      console.log();
+    }
   }
 
   warnIfOverBudget();
@@ -911,7 +1022,7 @@ ${cmd("search <query> [options]", "Search tweets (recent or full archive)")}
 ${cmd("watch <query> [options]", "Monitor X in real-time (polls on interval)")}
 ${cmd("diff <@user> [options]", "Track follower/following changes over time")}
 ${cmd("report <topic> [options]", "Generate intelligence report with AI analysis")}
-${cmd("thread <tweet_id>", "Fetch full conversation thread")}
+${cmd("thread <tweet_id> [--unroll] [--markdown]", "Fetch full conversation thread")}
 ${cmd("profile <username>", "Recent tweets from a user")}
 ${cmd("tweet <tweet_id>", "Fetch a single tweet")}
 ${cmd("article <url>", "Fetch and read full article content")}
@@ -932,6 +1043,7 @@ ${cmd("blocks [subcmd]", "Manage blocked users (OAuth required)")}
 ${cmd("mutes [subcmd]", "Manage muted users (OAuth required)")}
 ${cmd("bookmark <tweet_id>", "Bookmark a tweet (OAuth required)")}
 ${cmd("unbookmark <tweet_id>", "Remove a bookmark (OAuth required)")}
+${cmd("news <query> [--limit N]", "Search news articles")}
 ${cmd("trends [location] [opts]", "Fetch trending topics")}
 ${cmd("analyze <query>", "Analyze with Grok AI (xAI)")}
 ${cmd("costs [today|week|month]", "View API cost tracking & budget")}
@@ -972,7 +1084,9 @@ ${bold("Search options:")}
   ${dim("--sort likes|impressions|retweets|recent   (default: likes)")}
   ${dim("--since 1h|3h|12h|1d|7d   Time filter (default: last 7 days)")}
   ${dim("--until <date>             End time filter (full-archive only)")}
-  ${dim("--full                     Full-archive search (back to 2006, pay-per-use)")}
+  ${dim("--full                     Full-archive search (back to 2006, 2x cost, requires --confirm)")}
+  ${dim("--full-fields              Request extended tweet fields (entities, article, note_tweet, Premium badge)")}
+  ${dim("--confirm                  Confirm an expensive operation (used with --full)")}
   ${dim("--min-likes N              Filter minimum likes")}
   ${dim("--min-impressions N        Filter minimum impressions")}
   ${dim("--pages N                  Pages to fetch, 1-5 (default: 1)")}
@@ -1121,8 +1235,11 @@ async function main() {
   // Handle --fields for output filtering
   const fieldsOpt = getOpt("fields");
 
-  // Handle --dry-run for mutation commands
-  const dryRun = getFlag("dry-run");
+  // Detect --dry-run WITHOUT consuming it — each command parses its own
+  // flags downstream, and consuming here would hide the flag from cmdDiff /
+  // cmdSearch etc. We just probe args.indexOf.
+  globalDryRun = args.includes("--dry-run");
+  const dryRun = globalDryRun;
 
   try {
     switch (command) {
@@ -1246,9 +1363,16 @@ async function main() {
       case "eg":
         await cmdEngage(args.slice(1));
         break;
+      case "news":
+      case "n":
+        await cmdNews(args.slice(1));
+        break;
       case "costs":
       case "cost":
         cmdCosts(args.slice(1));
+        break;
+      case "credits":
+        cmdCredits(args.slice(1));
         break;
       case "billing":
       case "bill":
