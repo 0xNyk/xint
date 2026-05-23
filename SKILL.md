@@ -20,6 +20,9 @@ credentials:
   - name: X_CLIENT_ID
     description: X OAuth 2.0 client ID for user-context operations (bookmarks, likes, following, diff)
     required: false
+  - name: XQUIK_API_KEY
+    description: Optional Hermes Tweet / Xquik API key for read-only search, profile, thread, tweet
+    required: false
 required_env_vars:
   - X_BEARER_TOKEN
 primary_credential: X_BEARER_TOKEN
@@ -31,6 +34,7 @@ security:
     - https://api.x.com
     - https://x.com
     - https://api.x.ai
+    - https://xquik.com
 ---
 
 # xint — X Intelligence CLI
@@ -48,6 +52,7 @@ This skill requires sensitive credentials. Follow these guidelines:
 - **XAI_API_KEY**: Optional, needed for AI analysis. Also a secret
 - **X_CLIENT_ID**: Optional, needed for OAuth. Less sensitive but don't expose publicly
 - **XAI_MANAGEMENT_API_KEY**: Optional, for collections management
+- **XQUIK_API_KEY**: Optional, needed only when `XINT_READ_BACKEND=hermes-tweet`
 
 ### File Writes
 - This skill writes to its own `data/` directory: cache, exports, snapshots, OAuth tokens
@@ -81,6 +86,10 @@ All commands run from the project directory:
 ```bash
 # Set your environment variables
 export X_BEARER_TOKEN="your-token"
+
+# Optional read-only Hermes Tweet / Xquik backend
+export XINT_READ_BACKEND="hermes-tweet"
+export XQUIK_API_KEY="xq_..."
 ```
 
 ### Search
@@ -108,6 +117,11 @@ bun run xint.ts search "<query>" [options]
 - `--markdown` — markdown output for research docs
 
 Auto-adds `-is:retweet` unless query already includes it. All searches display estimated API cost.
+
+Set `XINT_READ_BACKEND=hermes-tweet` to route `search`, `profile`, `tweet`, and
+`thread` through Hermes Tweet / Xquik. Direct X API v2 remains the default, and
+OAuth, engagement, media, list, stream, trends, and Grok commands stay on their
+existing paths.
 
 **Examples:**
 ```bash

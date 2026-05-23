@@ -8,6 +8,20 @@ Bearer token from env var `X_BEARER_TOKEN`.
 -H "Authorization: Bearer $X_BEARER_TOKEN"
 ```
 
+## Optional Hermes Tweet / Xquik Read Backend
+
+Set the following env vars to route read-only `search`, `profile`, `tweet`, and
+`thread` commands through Hermes Tweet / Xquik:
+
+```
+XINT_READ_BACKEND=hermes-tweet
+XQUIK_API_KEY=xq_...
+```
+
+`HERMES_TWEET_API_KEY` is also accepted, and `XQUIK_BASE_URL` can point at a
+compatible deployment. Direct X API v2 remains the default route. OAuth,
+engagement, media, list, stream, trends, and Grok commands are unchanged.
+
 ## Search Endpoints
 
 ### Recent Search (last 7 days)

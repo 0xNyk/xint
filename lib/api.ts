@@ -5,6 +5,7 @@
 
 import { readFileSync } from "fs";
 import { join } from "path";
+import * as hermesTweet from "./hermes_tweet";
 
 export const BASE = "https://api.x.com/2";
 const RATE_DELAY_MS = 350; // stay under 450 req/15min
@@ -464,6 +465,10 @@ export async function search(
     fieldLevel?: "minimal" | "standard" | "extended"; // payload profile; default minimal
   } = {}
 ): Promise<Tweet[]> {
+  if (hermesTweet.readBackendEnabled()) {
+    return hermesTweet.search(query, opts);
+  }
+
   const isArchive = opts.fullArchive || false;
   const maxPerPage = isArchive ? 500 : 100;
   const maxResults = Math.max(Math.min(opts.maxResults || maxPerPage, maxPerPage), 10);
@@ -515,6 +520,10 @@ export async function thread(
   conversationId: string,
   opts: { pages?: number } = {}
 ): Promise<Tweet[]> {
+  if (hermesTweet.readBackendEnabled()) {
+    return hermesTweet.thread(conversationId, opts);
+  }
+
   const query = `conversation_id:${conversationId}`;
   const tweets = await search(query, {
     pages: opts.pages || 2,
@@ -549,6 +558,10 @@ export async function profile(
   username: string,
   opts: { count?: number; includeReplies?: boolean } = {}
 ): Promise<{ user: any; tweets: Tweet[] }> {
+  if (hermesTweet.readBackendEnabled()) {
+    return hermesTweet.profile(username, opts);
+  }
+
   // Look up user via cache — saves a $0.005 call if we've seen this user
   // already in the same process (common in report / engagement flows that
   // iterate over a list of accounts).
@@ -570,6 +583,10 @@ export async function profile(
  * Fetch a single tweet by ID.
  */
 export async function getTweet(tweetId: string): Promise<Tweet | null> {
+  if (hermesTweet.readBackendEnabled()) {
+    return hermesTweet.getTweet(tweetId);
+  }
+
   // Single-tweet fetch: marginal cost from the larger field set is
   // ~$0.005 vs $0.005 (same per-tweet rate; payload is the only diff),
   // so it's effectively free to ask for everything.

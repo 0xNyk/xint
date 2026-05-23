@@ -127,13 +127,26 @@ Set a local bearer token in your shell or secret manager (do not commit credenti
 
 Get your bearer token from [developer.x.com](https://developer.x.com) → Your Apps → App Settings.
 
-### 2. Optional: xAI for AI Features
+### 2. Optional: Hermes Tweet / Xquik Read Backend
+
+For read-only search, profile, tweet, and thread commands, xint can route through
+Hermes Tweet / Xquik instead of direct X API v2:
+
+- `XINT_READ_BACKEND=hermes-tweet`
+- `XQUIK_API_KEY` or `HERMES_TWEET_API_KEY`
+- `XQUIK_BASE_URL` (optional, defaults to `https://xquik.com`)
+
+The default X API path remains unchanged. OAuth, write, engagement, media,
+lists, stream, trends, and Grok commands continue to use their existing
+backends.
+
+### 3. Optional: xAI for AI Features
 
 For `analyze`, `report --sentiment`, and `article --ai`:
 
 - `XAI_API_KEY`
 
-### 3. Optional: OAuth for Write Access
+### 4. Optional: OAuth for Write Access
 
 For bookmarks, likes, lists, blocks/mutes, and follower tracking:
 
