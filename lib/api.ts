@@ -7,11 +7,12 @@ import { readFileSync } from "fs";
 import { join } from "path";
 
 export const BASE = "https://api.x.com/2";
+const XQUIK_SEARCH_URL = "https://xquik.com/api/v1/x/tweets/search";
 const RATE_DELAY_MS = 350; // stay under 450 req/15min
 
-function getToken(): string {
+function getEnvValue(name: string): string | undefined {
   // Try env first
-  if (process.env.X_BEARER_TOKEN) return process.env.X_BEARER_TOKEN;
+  if (process.env[name]) return process.env[name];
 
   // Try .env in project directory
   try {
@@ -19,9 +20,16 @@ function getToken(): string {
       join(import.meta.dir, "..", ".env"),
       "utf-8"
     );
-    const match = envFile.match(/X_BEARER_TOKEN=["']?([^"'\n]+)/);
+    const match = envFile.match(new RegExp(`${name}=["']?([^"'\\n]+)`));
     if (match) return match[1];
   } catch {}
+
+  return undefined;
+}
+
+function getToken(): string {
+  const token = getEnvValue("X_BEARER_TOKEN");
+  if (token) return token;
 
   throw new Error(
     "X_BEARER_TOKEN not found. Set it in your environment or in .env"
@@ -30,6 +38,19 @@ function getToken(): string {
 
 export function getBearerToken(): string {
   return getToken();
+}
+
+function getXquikApiKey(): string {
+  const apiKey = getEnvValue("XQUIK_API_KEY");
+  if (apiKey) return apiKey;
+
+  throw new Error(
+    "XQUIK_API_KEY not found. Set it in your environment or in .env"
+  );
+}
+
+function useXquikSearch(): boolean {
+  return getEnvValue("XINT_SEARCH_PROVIDER")?.toLowerCase() === "xquik";
 }
 
 export async function sleep(ms: number) {
@@ -341,6 +362,29 @@ export function parseSince(since: string): string | null {
   return null;
 }
 
+function parseDateOnly(value: string | undefined): string | null {
+  if (!value) return null;
+
+  const parsed = parseSince(value);
+  if (!parsed) return null;
+
+  return parsed.slice(0, 10);
+}
+
+function withSearchDateFilters(
+  query: string,
+  opts: { since?: string; until?: string },
+): string {
+  const parts = [query];
+  const since = parseDateOnly(opts.since);
+  const until = parseDateOnly(opts.until);
+
+  if (since) parts.push(`since:${since}`);
+  if (until) parts.push(`until:${until}`);
+
+  return parts.join(" ");
+}
+
 async function apiGet(url: string): Promise<RawResponse> {
   const token = getToken();
   const res = await fetch(url, {
@@ -408,6 +452,76 @@ export async function bearerPost(url: string, body?: any): Promise<any> {
   return res.json();
 }
 
+async function xquikSearch(
+  query: string,
+  opts: {
+    maxResults?: number;
+    pages?: number;
+    sortOrder?: "relevancy" | "recency";
+    since?: string;
+    until?: string;
+  },
+): Promise<Tweet[]> {
+  const apiKey = getXquikApiKey();
+  const maxResults = Math.max(Math.min(opts.maxResults || 100, 100), 1);
+  const pages = opts.pages || 1;
+  const queryType = opts.sortOrder === "recency" ? "Latest" : "Top";
+
+  let allTweets: Tweet[] = [];
+  let cursor: string | undefined;
+
+  for (let page = 0; page < pages; page++) {
+    const url = new URL(XQUIK_SEARCH_URL);
+    url.searchParams.set("q", withSearchDateFilters(query, opts));
+    url.searchParams.set("queryType", queryType);
+    url.searchParams.set("limit", String(maxResults));
+    if (cursor) url.searchParams.set("cursor", cursor);
+
+    const res = await fetch(url, {
+      headers: { "X-API-Key": apiKey },
+    });
+
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`Xquik API ${res.status}: ${body.slice(0, 200)}`);
+    }
+
+    const raw = await res.json();
+    const tweets = Array.isArray(raw.tweets) ? raw.tweets : [];
+    allTweets.push(...tweets.map((tweet: any): Tweet => {
+      const author = tweet.author || {};
+      const username = author.username || author.userName || "?";
+      return {
+        id: String(tweet.id || ""),
+        text: String(tweet.text || ""),
+        author_id: String(author.id || tweet.author_id || ""),
+        username,
+        name: String(author.name || username),
+        created_at: String(tweet.createdAt || tweet.created_at || ""),
+        conversation_id: String(tweet.conversationId || tweet.conversation_id || tweet.id || ""),
+        metrics: {
+          likes: Number(tweet.likeCount || tweet.likes || 0),
+          retweets: Number(tweet.retweetCount || tweet.retweets || 0),
+          replies: Number(tweet.replyCount || tweet.replies || 0),
+          quotes: Number(tweet.quoteCount || tweet.quotes || 0),
+          impressions: Number(tweet.viewCount || tweet.impressionCount || 0),
+          bookmarks: Number(tweet.bookmarkCount || 0),
+        },
+        urls: [],
+        mentions: [],
+        hashtags: [],
+        tweet_url: String(tweet.url || `https://x.com/${username}/status/${tweet.id}`),
+      };
+    }));
+
+    cursor = raw.next_cursor;
+    if (!raw.has_next_page || !cursor) break;
+    if (page < pages - 1) await sleep(RATE_DELAY_MS);
+  }
+
+  return allTweets;
+}
+
 /**
  * OAuth-authenticated GET request. Uses a user access token instead of
  * the app bearer token. Needed for user-context endpoints (bookmarks).
@@ -464,6 +578,15 @@ export async function search(
     fieldLevel?: "minimal" | "standard" | "extended"; // payload profile; default minimal
   } = {}
 ): Promise<Tweet[]> {
+  if (useXquikSearch()) {
+    if (opts.fullArchive) {
+      throw new Error(
+        "Xquik search provider does not support full-archive mode. Unset XINT_SEARCH_PROVIDER for full archive search."
+      );
+    }
+    return xquikSearch(query, opts);
+  }
+
   const isArchive = opts.fullArchive || false;
   const maxPerPage = isArchive ? 500 : 100;
   const maxResults = Math.max(Math.min(opts.maxResults || maxPerPage, maxPerPage), 10);
