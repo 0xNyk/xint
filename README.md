@@ -524,7 +524,7 @@ If you find this project useful, consider supporting my open-source work.
 
 **Solana donations**
 
-`BYLu8XD8hGDUtdRBWpGWu5HKoiPrWqCxYFSh4oxXuvPg`
+`2k1oq9U99mwy4gm8P2hXPJoZusoXQCpFs35EEf5Ve73y`
 
 
 ---
