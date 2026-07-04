@@ -78,7 +78,7 @@ function saveMeta(meta: CreditsMeta): void {
   mkdirSync(dir, { recursive: true });
   const tmp = CREDITS_FILE + ".tmp";
   writeFileSync(tmp, JSON.stringify(meta, null, 2), "utf-8");
-  chmodSync(tmp, 0o660);
+  chmodSync(tmp, 0o600);
   renameSync(tmp, CREDITS_FILE);
 }
 

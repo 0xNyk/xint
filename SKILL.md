@@ -27,6 +27,25 @@ security:
   always: false
   autonomous: false
   local_data_dir: data/
+  fs_write:
+    - path: data/cache/
+      why: search/profile/trends response cache (15min TTL)
+    - path: data/exports/
+      why: saved research output (--save flag only)
+    - path: data/snapshots/
+      why: follower/following snapshots for diff
+    - path: data/oauth-tokens.json
+      why: OAuth tokens (chmod 600)
+    - path: data/api-costs.json
+      why: cost tracking
+    - path: data/watchlist.json
+      why: monitored accounts
+    - path: data/credits.json
+      why: Grok credit tracking
+    - path: data/bookmark-kb.json
+      why: bookmark knowledge base index
+    - path: ~/obsidian/nyk/inbox/
+      why: Obsidian bookmark sync only — opt-in, only when user explicitly requests it
   network_endpoints:
     - https://api.x.com
     - https://x.com

@@ -153,7 +153,7 @@ function saveData(data: CostData): void {
   mkdirSync(dir, { recursive: true });
   const tmp = DATA_FILE + ".tmp";
   writeFileSync(tmp, JSON.stringify(data, null, 2), "utf-8");
-  chmodSync(tmp, 0o660);
+  chmodSync(tmp, 0o600);
   renameSync(tmp, DATA_FILE);
 }
 

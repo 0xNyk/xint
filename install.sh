@@ -7,6 +7,8 @@ REPO="xint"
 INSTALL_BIN_DIR="${XINT_INSTALL_BIN_DIR:-$HOME/.local/bin}"
 INSTALL_ROOT="${XINT_INSTALL_ROOT:-$HOME/.local/share/xint}"
 REQUESTED_VERSION="${XINT_INSTALL_VERSION:-latest}"
+# Checksum verification is required by default; set XINT_INSTALL_REQUIRE_CHECKSUM=0 to opt out.
+REQUIRE_CHECKSUM="${XINT_INSTALL_REQUIRE_CHECKSUM:-1}"
 
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -67,21 +69,21 @@ main() {
         fi
         echo "==> Checksum verified"
       else
-        if [[ "${XINT_INSTALL_REQUIRE_CHECKSUM:-0}" == "1" ]]; then
+        if [[ "$REQUIRE_CHECKSUM" == "1" ]]; then
           echo "error: checksum required but neither sha256sum nor shasum is available" >&2
           exit 1
         fi
         echo "==> Checksum tool unavailable; skipping verification"
       fi
     else
-      if [[ "${XINT_INSTALL_REQUIRE_CHECKSUM:-0}" == "1" ]]; then
+      if [[ "$REQUIRE_CHECKSUM" == "1" ]]; then
         echo "error: checksum required but no entry found in checksums.txt" >&2
         exit 1
       fi
       echo "==> Checksums file present but no entry for $asset_name; skipping verification"
     fi
   else
-    if [[ "${XINT_INSTALL_REQUIRE_CHECKSUM:-0}" == "1" ]]; then
+    if [[ "$REQUIRE_CHECKSUM" == "1" ]]; then
       echo "error: checksum required but checksums.txt not found in release" >&2
       exit 1
     fi
