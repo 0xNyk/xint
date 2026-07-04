@@ -39,9 +39,10 @@ main() {
   version="$(resolve_version)"
   local tarball_url="https://github.com/${OWNER}/${REPO}/archive/refs/tags/${version}.tar.gz"
 
-  local tmpdir
+  # Not `local`: the EXIT trap fires at global scope, where a function-local
+  # would be unbound under `set -u` (and the temp dir would never be removed).
   tmpdir="$(mktemp -d)"
-  trap 'rm -rf "$tmpdir"' EXIT
+  trap 'rm -rf "${tmpdir:-}"' EXIT
 
   echo "==> Downloading ${REPO} ${version}"
   local tarball="${tmpdir}/xint.tar.gz"
