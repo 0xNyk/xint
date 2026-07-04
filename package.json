@@ -1,6 +1,6 @@
 {
   "name": "xint",
-  "version": "2026.3.16",
+  "version": "2026.7.5",
   "author": "Nyk",
   "repository": {
     "type": "git",
@@ -13,7 +13,7 @@
   "bugs": {
     "url": "https://github.com/0xNyk/xint/issues"
   },
-  "description": "X Intelligence CLI — search, analyze, and engage on X/Twitter from your terminal",
+  "description": "X Intelligence CLI \u2014 search, analyze, and engage on X/Twitter from your terminal",
   "engines": {
     "bun": ">=1.0.0"
   },

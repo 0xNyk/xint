@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2026.7.5] - 2026-07-05
+
+### Fixed
+- **Broken fresh installs (#21)** — `lib/spinner.ts` and `lib/news.ts` were imported but never committed to git; every new install failed at startup with `Cannot find module './lib/spinner'`. Both are now committed, and CI runs on push/PR (it was `workflow_dispatch`-only, which is how this shipped unnoticed).
+
+### Security
+- Package API server binds `127.0.0.1` by default and refuses non-loopback binds without `XINT_PACKAGE_API_KEY(S)` (was `0.0.0.0` with optional auth).
+- Billing webhook rejects all events unless `XINT_BILLING_WEBHOOK_SECRET` is configured — unsigned events could previously grant plan entitlements.
+- `engage --execute` confirms each reply on a TTY, blocks URLs not present in your own content pool, and hardens the Grok prompt against injection from hostile tweet text. `XINT_ENGAGE_AUTO=1` explicitly opts into unattended posting.
+- Collections/files uploads use native fetch + FormData — xAI keys no longer pass through curl argv (visible in the process table).
+- Webhook validator blocks private/link-local/cloud-metadata IP ranges unless explicitly allowlisted (SSRF defense).
+- `install.sh` requires checksum verification by default (`XINT_INSTALL_REQUIRE_CHECKSUM=0` to opt out); this release publishes `checksums.txt`.
+- New CI security-guard job: no tracked `.env`, no `eval`/`new Function`/`atob` in source, runtime-dependency allowlist.
+- Telemetry state files written 0600; follower snapshot filenames sanitized against path traversal.
+
+### Changed
+- **Default Grok model is `grok-4.3`.** The 2026-05-15 xAI retirement silently redirects `grok-4-1-fast`, `grok-3`, and friends to grok-4.3 **at grok-4.3 rates** — cost tracking now reflects actual billing (it was under-counting ~6x on redirected slugs). Budget tiers: cheap=grok-4.3, balanced=grok-4.20, max=grok-4.20-reasoning.
+- `--min-likes` and `--quality` apply the `min_likes:` operator server-side (X search index, 2026-05-04) — filtering before billing, with automatic fallback when the operator is rejected. `search()` also accepts `minReplies`/`minReposts`.
+- Owned reads (your own bookmarks/likes) tracked at $0.001/resource per the 2026-04-20 X pricing restructure. 403s on like/follow/quote-post explain the 2026-04-20 self-serve endpoint removal.
+- SKILL.md declares an explicit `fs_write` scope; `references/x-api.md` gains a "2026 Platform Changes" section (pricing, search operators, official X MCP server, automation policy).
+
 ### Added — Forecast + user LRU (2026-05-16)
 - **`xint costs forecast`** — projects end-of-month spend from current MTD burn rate (or 7-day trailing average when MTD < 3 days). Shows top-3 expensive operations with share-of-spend percentages and a confidence note. `--json` for machine-readable output.
 - **Per-process user-record LRU** — `lookupUserByUsername()` caches user resolutions across calls within the same process. Wired into `api.profile()`. A `report` command that iterates 10 accounts now pays for 10 user lookups; a second pass within the same MCP session pays for 0. Pass `{refresh: true}` to bypass.
