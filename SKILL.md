@@ -27,6 +27,25 @@ security:
   always: false
   autonomous: false
   local_data_dir: data/
+  fs_write:
+    - path: data/cache/
+      why: search/profile/trends response cache (15min TTL)
+    - path: data/exports/
+      why: saved research output (--save flag only)
+    - path: data/snapshots/
+      why: follower/following snapshots for diff
+    - path: data/oauth-tokens.json
+      why: OAuth tokens (chmod 600)
+    - path: data/api-costs.json
+      why: cost tracking
+    - path: data/watchlist.json
+      why: monitored accounts
+    - path: data/credits.json
+      why: Grok credit tracking
+    - path: data/bookmark-kb.json
+      why: bookmark knowledge base index
+    - path: ~/obsidian/nyk/inbox/
+      why: Obsidian bookmark sync only — opt-in, only when user explicitly requests it
   network_endpoints:
     - https://api.x.com
     - https://x.com
@@ -173,7 +192,7 @@ Also supports X tweet URLs — automatically extracts the linked article from th
 **Options:**
 - `--json` — structured JSON output (title, content, author, published, wordCount, ttr)
 - `--full` — return full article text without truncation (default truncates to ~5000 chars)
-- `--model <name>` — Grok model (default: grok-4)
+- `--model <name>` — Grok model (default: grok-4.3)
 - `--ai <text>` — analyze article with Grok AI (passes content to analyze command)
 
 **Examples:**
@@ -271,8 +290,8 @@ bun run xint.ts search "topic" --json | bun run xint.ts analyze --pipe  # Pipe s
 Uses xAI's Grok API (OpenAI-compatible). Requires `XAI_API_KEY` in env or `.env`.
 
 **Options:**
-- `--budget <tier>` — `cheap` (default, grok-4-1-fast, $0.20/$0.50 per M tokens) | `balanced` (grok-4.3, $1.25/$2.50) | `max` (grok-4.20-reasoning, $2/$6)
-- `--model <name>` — explicit override: grok-4.3, grok-4-1-fast, grok-4.20, grok-4.20-reasoning, grok-2-vision (retiring 2026-05-15)
+- `--budget <tier>` — `cheap` (default, grok-4.3, $1.25/$2.50 per M tokens) | `balanced` (grok-4.20, $2/$6) | `max` (grok-4.20-reasoning, $2/$6)
+- `--model <name>` — explicit override: grok-4.3, grok-4.20, grok-4.20-reasoning, grok-build-0.1 (retired slugs like grok-3/grok-4-1-fast silently redirect to grok-4.3 and bill grok-4.3 rates)
 - `--tweets <file>` — path to JSON file containing tweets
 - `--pipe` — read tweet JSON from stdin
 - `--image <url>` — image input (auto-uses grok-4.3 vision)
@@ -309,8 +328,8 @@ bun run xint.ts credits --data-sharing on|off   # Toggle data-share opt-in
 >   2. Generate an API key
 >   3. Decide on data-sharing (toggle with `xint credits --data-sharing on`)
 >   4. `export XAI_API_KEY=xai-...`
->   5. xint defaults to `--budget cheap` (grok-4-1-fast) — ~$0.0003 per typical
->      analyze call, so the free tier lasts a long time.
+>   5. xint defaults to `--budget cheap` (grok-4.3) — ~$0.002 per typical
+>      analyze call, so the free tier still lasts a long time.
 
 xint shows a Premium-aware preface in the credit guide when OAuth is configured
 and the user's `subscription_type` is `Premium`/`Premium+`, so it never falsely
@@ -462,7 +481,7 @@ Generates comprehensive markdown intelligence reports combining search results, 
 **Options:**
 - `--sentiment` — include per-tweet sentiment analysis
 - `--accounts @user1,@user2` — include per-account activity sections
-- `--model <name>` — Grok model for AI summary (default: grok-4-1-fast)
+- `--model <name>` — Grok model for AI summary (default: grok-4.3)
 - `--pages N` — search pages to fetch (default: 2)
 - `--save` — save report to `data/exports/`
 
@@ -470,7 +489,7 @@ Generates comprehensive markdown intelligence reports combining search results, 
 ```bash
 bun run xint.ts report "AI agents"
 bun run xint.ts report "solana" --sentiment --accounts @aaboronkov,@rajgokal --save
-bun run xint.ts report "crypto market" --model grok-3 --sentiment --save
+bun run xint.ts report "crypto market" --model grok-4.20-reasoning --sentiment --save
 ```
 
 **Agent usage:** Use `report` when the user wants a comprehensive briefing on a topic. This is the highest-level command — it runs search, sentiment, and analysis in one pass and produces a structured markdown report. For quick pulse checks, use `search --quick` instead.
@@ -661,8 +680,9 @@ Content sections: **Signal** (author, engagement, tweet URL) → **Core Thesis**
 
 All API calls are tracked in `data/api-costs.json`. The budget system warns when approaching limits but does not block calls (passive).
 
-**X API v2 pay-per-use rates:**
-- Tweet reads (search, bookmarks, likes, profile): ~$0.005/tweet
+**X API v2 pay-per-use rates** (restructured 2026-04-20; pay-per-use is the only option for new developers — tiered plans closed 2026-02-06):
+- Tweet reads (search, profile): ~$0.005/tweet (2M reads/mo cap, 24h dedup)
+- Owned reads (your own bookmarks, likes, posts, lists): ~$0.001/resource
 - Full-archive search: ~$0.01/tweet
 - Write operations (like, unlike, bookmark, unbookmark): ~$0.01/action
 - Profile lookups: ~$0.005/lookup
@@ -671,8 +691,8 @@ All API calls are tracked in `data/api-costs.json`. The budget system warns when
 - User search: ~$0.01/page
 - Reposts lookup: ~$0.01/page
 - Grok AI (sentiment/analyze/report): billed by xAI separately (not X API)
-  - grok-4-1-fast: $0.20/$0.50 per 1M tokens (default for analysis)
-  - grok-4: $3.00/$15.00 per 1M tokens (used for article/x-search)
+  - grok-4.3: $1.25/$2.50 per 1M tokens (default — cheapest current model since the 2026-05-15 retirement removed the $0.20 fast tier)
+  - grok-4.20 / grok-4.20-reasoning: $2.00/$6.00 per 1M tokens
   - xAI tool invocations: max $5/1K calls (50% cheaper than 2025 rates)
 
 Default daily budget: $1.00 (adjustable via `costs budget set <N>`).
@@ -778,7 +798,7 @@ The Package API provides agent memory package management:
 When a tool fails, try the next option:
 
 1. `xint_search` (X API v2, fast, real-time)
-2. `xint_xsearch` (xAI Grok search via grok-4-1-fast, AI-enhanced, requires XAI_API_KEY)
+2. `xint_xsearch` (xAI Grok search via grok-4.3, AI-enhanced, requires XAI_API_KEY)
 3. Cached results from previous searches (15min TTL)
 
 For article fetching:

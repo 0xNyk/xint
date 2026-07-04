@@ -535,6 +535,9 @@ async function cmdSearch() {
         until: until || undefined,
         fullArchive,
         fieldLevel: fullFields ? "extended" : "minimal",
+        // Server-side operators (2026-05-04 index) filter before billing;
+        // the post-hoc filters below stay as belt-and-braces.
+        minLikes: minLikes > 0 ? minLikes : quality ? 10 : undefined,
       });
       spinner.done(`Found ${tweets.length} tweets`);
     } catch (e) {
@@ -561,7 +564,8 @@ async function cmdSearch() {
     });
   }
 
-  // --quality: post-hoc filter for min 10 likes (min_faves not available as a search operator)
+  // --quality: min 10 likes. Applied server-side via min_likes: above;
+  // kept post-hoc too in case the operator was rejected on this tier.
   if (quality) {
     tweets = api.filterEngagement(tweets, { minLikes: 10 });
   }
@@ -1132,7 +1136,7 @@ ${bold("Diff options:")}
 ${bold("Report options:")}
   ${dim("--accounts, -a <list>      Comma-separated accounts (e.g., @user1,@user2)")}
   ${dim("--sentiment, -s            Include sentiment analysis")}
-  ${dim("--model <name>             Grok model (default: grok-3-mini)")}
+  ${dim("--model <name>             Grok model (default: grok-4.3)")}
   ${dim("--pages <N>                Search pages (default: 2)")}
   ${dim("--save                     Save report to data/exports/")}
 
@@ -1176,7 +1180,7 @@ ${bold("Analyze options:")}
   ${dim("<query>                    Ask Grok a question")}
   ${dim("--tweets <file>            Analyze tweets from a JSON file")}
   ${dim("--pipe                     Read tweet JSON from stdin")}
-  ${dim("--model <name>             grok-3, grok-3-mini (default), grok-2")}
+  ${dim("--model <name>             grok-4.3 (default), grok-4.20, grok-4.20-reasoning")}
   ${dim("--system <prompt>          Custom system prompt")}
 
 ${bold("Costs options:")}

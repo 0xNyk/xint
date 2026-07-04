@@ -11,16 +11,16 @@ import { describe, expect, it } from "bun:test";
 import { resolveModel, isPremium, premiumChatRoutingTip } from "../lib/grok";
 
 describe("resolveModel — budget routing", () => {
-  it("defaults to grok-4-1-fast when no budget given", () => {
-    expect(resolveModel(undefined, false)).toBe("grok-4-1-fast");
+  it("defaults to grok-4.3 when no budget given", () => {
+    expect(resolveModel(undefined, false)).toBe("grok-4.3");
   });
 
-  it("maps cheap → grok-4-1-fast (the agent-safe default)", () => {
-    expect(resolveModel("cheap", false)).toBe("grok-4-1-fast");
+  it("maps cheap → grok-4.3 (cheapest current model post-2026-05-15 retirement)", () => {
+    expect(resolveModel("cheap", false)).toBe("grok-4.3");
   });
 
-  it("maps balanced → grok-4.3 (flagship, 1M ctx)", () => {
-    expect(resolveModel("balanced", false)).toBe("grok-4.3");
+  it("maps balanced → grok-4.20 (2M ctx)", () => {
+    expect(resolveModel("balanced", false)).toBe("grok-4.20");
   });
 
   it("maps max → grok-4.20-reasoning (highest-cost reasoning)", () => {
@@ -172,8 +172,8 @@ describe("cost_in_usd_ticks priority", () => {
       const costsFile = join(import.meta.dir, "..", "data", "api-costs.json");
       const data = JSON.parse(readFileSync(costsFile, "utf-8"));
       const last = data.entries[data.entries.length - 1];
-      // Local estimate: 1M tokens × $0.20/M input = $0.20
-      expect(last.cost_usd).toBeCloseTo(0.20, 4);
+      // Local estimate: 1M tokens × $1.25/M input (grok-4.3 default) = $1.25
+      expect(last.cost_usd).toBeCloseTo(1.25, 4);
     } finally {
       globalThis.fetch = originalFetch;
       if (originalKey === undefined) delete process.env.XAI_API_KEY;

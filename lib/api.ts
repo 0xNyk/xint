@@ -462,8 +462,30 @@ export async function search(
     until?: string; // ISO 8601 timestamp or shorthand (full-archive only)
     fullArchive?: boolean;
     fieldLevel?: "minimal" | "standard" | "extended"; // payload profile; default minimal
+    minLikes?: number;   // server-side min_likes: operator (search index, 2026-05-04)
+    minReplies?: number; // server-side min_replies: operator
+    minReposts?: number; // server-side min_reposts: operator
   } = {}
 ): Promise<Tweet[]> {
+  // Server-side engagement operators (added to the X search index 2026-05-04)
+  // filter before billing — cheaper than fetching pages and filtering locally.
+  // If the operator is rejected (400), retry once without it.
+  const operatorParts: string[] = [];
+  if (opts.minLikes && !/\bmin_likes:/.test(query)) operatorParts.push(`min_likes:${opts.minLikes}`);
+  if (opts.minReplies && !/\bmin_replies:/.test(query)) operatorParts.push(`min_replies:${opts.minReplies}`);
+  if (opts.minReposts && !/\bmin_reposts:/.test(query)) operatorParts.push(`min_reposts:${opts.minReposts}`);
+  if (operatorParts.length > 0) {
+    const stripped = { ...opts, minLikes: undefined, minReplies: undefined, minReposts: undefined };
+    try {
+      return await search(`${query} ${operatorParts.join(" ")}`, stripped);
+    } catch (err: any) {
+      const msg = String(err?.message || "");
+      if (!/\b400\b|invalid|operator/i.test(msg)) throw err;
+      // Operator not accepted on this tier/endpoint — fall back to plain query
+      return search(query, stripped);
+    }
+  }
+
   const isArchive = opts.fullArchive || false;
   const maxPerPage = isArchive ? 500 : 100;
   const maxResults = Math.max(Math.min(opts.maxResults || maxPerPage, maxPerPage), 10);
@@ -645,9 +667,14 @@ export async function oauthPost(url: string, accessToken: string, body?: any): P
   }
   if (res.status === 403) {
     const text = await res.text();
+    const isEngagementWrite = /\/likes|\/following|\/retweets/.test(url);
+    const hint = isEngagementWrite
+      ? `Note: X removed Like/Follow/Quote-Post write endpoints from ALL self-serve tiers ` +
+        `(pay-per-use, Basic, Pro) on 2026-04-20 — they are Enterprise-only now. ` +
+        `Replies and posting still work. `
+      : `This endpoint requires pay-per-use or Enterprise access. `;
     throw new Error(
-      `X API access forbidden (403). This endpoint requires pay-per-use or Enterprise access. ` +
-      `Your current X API tier may not include this endpoint. ${text.slice(0, 200)}`
+      `X API access forbidden (403). ${hint}${text.slice(0, 200)}`
     );
   }
   if (res.status === 429) {
@@ -690,9 +717,14 @@ export async function oauthPut(url: string, accessToken: string, body?: any): Pr
   }
   if (res.status === 403) {
     const text = await res.text();
+    const isEngagementWrite = /\/likes|\/following|\/retweets/.test(url);
+    const hint = isEngagementWrite
+      ? `Note: X removed Like/Follow/Quote-Post write endpoints from ALL self-serve tiers ` +
+        `(pay-per-use, Basic, Pro) on 2026-04-20 — they are Enterprise-only now. ` +
+        `Replies and posting still work. `
+      : `This endpoint requires pay-per-use or Enterprise access. `;
     throw new Error(
-      `X API access forbidden (403). This endpoint requires pay-per-use or Enterprise access. ` +
-      `Your current X API tier may not include this endpoint. ${text.slice(0, 200)}`
+      `X API access forbidden (403). ${hint}${text.slice(0, 200)}`
     );
   }
   if (res.status === 429) {
@@ -728,9 +760,14 @@ export async function oauthDelete(url: string, accessToken: string): Promise<any
   }
   if (res.status === 403) {
     const text = await res.text();
+    const isEngagementWrite = /\/likes|\/following|\/retweets/.test(url);
+    const hint = isEngagementWrite
+      ? `Note: X removed Like/Follow/Quote-Post write endpoints from ALL self-serve tiers ` +
+        `(pay-per-use, Basic, Pro) on 2026-04-20 — they are Enterprise-only now. ` +
+        `Replies and posting still work. `
+      : `This endpoint requires pay-per-use or Enterprise access. `;
     throw new Error(
-      `X API access forbidden (403). This endpoint requires pay-per-use or Enterprise access. ` +
-      `Your current X API tier may not include this endpoint. ${text.slice(0, 200)}`
+      `X API access forbidden (403). ${hint}${text.slice(0, 200)}`
     );
   }
   if (res.status === 429) {

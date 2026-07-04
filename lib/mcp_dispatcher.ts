@@ -107,7 +107,7 @@ export function createMcpToolHandlers(deps: MCPDispatcherDeps): Record<string, M
 
     async xint_analyze(args) {
       // Wire `budget` → model routing so agents can pick a tier without
-      // knowing model names. Default is cheap (grok-4-1-fast) — same as CLI.
+      // knowing model names. Default is cheap (grok-4.3) — same as CLI.
       const query = String(args.query || "");
       if (!query) {
         return actionInfo("xint_analyze requires a `query` argument.", { note: "missing query" });

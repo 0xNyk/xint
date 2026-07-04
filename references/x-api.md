@@ -174,3 +174,55 @@ GET https://api.x.com/2/tweets/{id}
 ```
 
 Same fields/expansions params. Use for fetching specific tweets by ID.
+
+
+## 2026 Platform Changes (last reviewed 2026-07-04)
+
+### Pricing (effective 2026-04-20; tiered plans closed to new signups 2026-02-06)
+- Pay-per-use is the only option for new developers. Legacy Basic/Pro persist
+  only for accounts subscribed before the cutover — do not cancel if grandfathered.
+- Post reads $0.005/post (2M/mo cap, 24h dedup). **Owned reads** (your own
+  posts, bookmarks, likes, followers, lists) $0.001/resource.
+- `POST /2/tweets` $0.015 — **$0.20 if the post contains a URL** (anti-spam
+  surcharge). Warn before posting links.
+
+### Engagement endpoints removed from self-serve (2026-04-20)
+Like, Follow, and Quote-Post **write** endpoints are Enterprise-only now.
+`xint like/unlike/follow` will 403 on pay-per-use/Basic/Pro; the CLI explains
+this on 403. Replies and posting still work.
+
+### Search (2026-05-04 index migration)
+- New operators: `min_likes:N`, `min_replies:N`, `min_reposts:N` — xint's
+  `--min-likes` and `--quality` now apply these server-side (cheaper: filters
+  before billing) with automatic fallback if rejected.
+- **Retweets are no longer returned by keyword searches** — the auto-added
+  `-is:retweet` is belt-and-braces now.
+
+### New capabilities worth adopting
+- `paid_partnership` boolean on posts (2026-06-03; settable + readable via
+  `tweet.fields=paid_partnership`).
+- Articles draft/publish endpoints (2026-06-11).
+- **Official X MCP server** (2026-06-30): `https://api.x.com/mcp` — read-only
+  (search, users, bookmarks, trends, news, Articles) with app-only bearer or
+  user-context OAuth via the `@xdevplatform/xurl` bridge. Candidate replacement
+  for raw read bindings.
+
+### xAI / Grok
+- Live Search API (`search_parameters`) removed 2026-01-12 (410 Gone). xint
+  already uses the Agent Tools API (`x_search` via /v1/responses) — do not
+  reintroduce `search_parameters`.
+- 2026-05-15 retirement: grok-4-1-fast*, grok-4-fast*, grok-4-0709,
+  grok-code-fast-1, grok-3* all silently redirect to grok-4.3 and bill grok-4.3
+  rates ($1.25/$2.50 per M). Current lineup: grok-4.3 (default, vision, 1M ctx),
+  grok-4.20 family (2M ctx), grok-build-0.1 (agentic coding).
+- Server-side tool calls (web_search/x_search) bill ~$5 per 1k calls on top of
+  tokens. Structured outputs (JSON schema) are available on grok-4.3 — good fit
+  for analysis output; not yet wired into xint.
+
+### Automation policy notes
+- Automated *engagement* (likes/follows/mass replies) remains prohibited and is
+  now technically blocked on self-serve tiers. xint's human-in-the-loop reply
+  suggestions are the compliant pattern — `engage --execute` now requires
+  per-reply confirmation.
+- "Made with AI" label (2026-03) is voluntary today; EU AI Act disclosure
+  obligations begin 2026-08-02. Consider labeling AI-assisted output.

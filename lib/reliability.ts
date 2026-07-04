@@ -78,7 +78,7 @@ function saveData(data: ReliabilityData): void {
   mkdirSync(dir, { recursive: true });
   const tmp = path + ".tmp";
   writeFileSync(tmp, JSON.stringify(data, null, 2), "utf-8");
-  chmodSync(tmp, 0o660);
+  chmodSync(tmp, 0o600);
   renameSync(tmp, path);
 }
 

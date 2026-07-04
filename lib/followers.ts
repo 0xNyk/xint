@@ -56,7 +56,10 @@ function ensureDir(): void {
 }
 
 function snapshotPath(username: string, type: string, date: string): string {
-  return join(SNAPSHOTS_DIR, `${username.toLowerCase()}-${type}-${date}.json`);
+  // Usernames come from CLI args — sanitize so a crafted value can't
+  // traverse outside data/snapshots/ (same guard as report.ts/media.ts).
+  const safe = username.toLowerCase().replace(/[^a-z0-9_-]/g, "-");
+  return join(SNAPSHOTS_DIR, `${safe}-${type}-${date}.json`);
 }
 
 function saveSnapshot(snap: Snapshot): string {

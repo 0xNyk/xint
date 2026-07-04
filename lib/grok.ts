@@ -32,7 +32,7 @@ export interface GrokVisionOpts extends GrokOpts {
 }
 
 export interface GrokOpts {
-  model?: string;        // default "grok-4-1-fast"
+  model?: string;        // default "grok-4.3"
   temperature?: number;  // default 0.7
   maxTokens?: number;    // default 1024
 }
@@ -56,41 +56,44 @@ interface XaiApiError {
 // ---------------------------------------------------------------------------
 
 const XAI_ENDPOINT = "https://api.x.ai/v1/chat/completions";
-const DEFAULT_MODEL = "grok-4-1-fast";
+const DEFAULT_MODEL = "grok-4.3";
 const DEFAULT_VISION_MODEL = "grok-4.3";
 const DEFAULT_TEMPERATURE = 0.7;
 const DEFAULT_MAX_TOKENS = 1024;
 
-// Pricing per 1M tokens (USD), current as of 2026-05-14.
-// xAI retires grok-4, grok-3*, grok-2*, grok-code-fast-1 on 2026-05-15
-// (auto-redirects to grok-4.3). Kept here as aliases for compat;
-// new defaults route to grok-4-1-fast (cheap) and grok-4.3 (vision/balanced).
+// Pricing per 1M tokens (USD), current as of 2026-07-04 (docs.x.ai/developers/models).
+// The 2026-05-15 retirement removed grok-4-1-fast*, grok-4-fast*, grok-4-0709,
+// grok-code-fast-1, and grok-3* — those slugs now silently REDIRECT to
+// grok-4.3, so retired aliases below carry grok-4.3 pricing (that is what
+// xAI actually bills). Do not "save money" by passing a retired slug.
 const MODEL_PRICING: Record<string, { input: number; output: number }> = {
   // Current lineup
-  "grok-4.3":                      { input: 1.25, output: 2.50 },   // flagship, 1M ctx
+  "grok-4.3":                      { input: 1.25, output: 2.50 },   // flagship, 1M ctx, vision, default
   "grok-4.20":                     { input: 2.00, output: 6.00 },   // 2M ctx
   "grok-4.20-reasoning":           { input: 2.00, output: 6.00 },
   "grok-4.20-non-reasoning":       { input: 2.00, output: 6.00 },
-  "grok-4-1-fast":                 { input: 0.20, output: 0.50 },   // 2M ctx, default
-  "grok-4-1-fast-reasoning":       { input: 0.20, output: 0.50 },
-  "grok-4-1-fast-non-reasoning":   { input: 0.20, output: 0.50 },
-  // Retiring 2026-05-15 — kept for pricing lookup when xAI auto-redirects
-  "grok-4":                        { input: 3.00, output: 15.00 },
+  "grok-build-0.1":                { input: 1.00, output: 2.00 },   // agentic coding, 256k ctx
+  // Retired 2026-05-15 — xAI redirects these to grok-4.3 and bills grok-4.3 rates
+  "grok-4-1-fast":                 { input: 1.25, output: 2.50 },
+  "grok-4-1-fast-reasoning":       { input: 1.25, output: 2.50 },
+  "grok-4-1-fast-non-reasoning":   { input: 1.25, output: 2.50 },
+  "grok-4":                        { input: 1.25, output: 2.50 },
   "grok-4.20-beta":                { input: 2.00, output: 6.00 },
-  "grok-code-fast-1":              { input: 0.20, output: 1.50 },
-  "grok-3":                        { input: 3.00, output: 15.00 },
-  "grok-3-mini":                   { input: 0.10, output: 0.40 },
-  "grok-2":                        { input: 2.00, output: 10.00 },
-  "grok-2-vision":                 { input: 2.00, output: 10.00 },
+  "grok-code-fast-1":              { input: 1.25, output: 2.50 },
+  "grok-3":                        { input: 1.25, output: 2.50 },
+  "grok-3-mini":                   { input: 1.25, output: 2.50 },
+  "grok-2":                        { input: 1.25, output: 2.50 },
+  "grok-2-vision":                 { input: 1.25, output: 2.50 },
 };
 
 // Budget tiers — agent-friendly routing.
-// Free console.x.ai credits ($25 signup + $150/mo data-share) stretch ~5x
-// further on `cheap` than `max`. Default to cheap.
+// Post-May-15 lineup: grok-4.3 ($1.25/$2.50) is both the cheapest and the
+// default; the old $0.20 fast tier no longer exists. Free console.x.ai
+// credits ($25 signup + $150/mo data-share) still apply.
 type Budget = "cheap" | "balanced" | "max";
 const BUDGET_MODELS: Record<Budget, string> = {
-  cheap:    "grok-4-1-fast",
-  balanced: "grok-4.3",
+  cheap:    "grok-4.3",
+  balanced: "grok-4.20",
   max:      "grok-4.20-reasoning",
 };
 
@@ -156,7 +159,7 @@ export function printCreditGuide(premiumStatus?: string): void {
   console.log(`    4. export XAI_API_KEY=xai-...`);
   console.log(``);
   console.log(`xint routes your agent to the cheapest sufficient model by default`);
-  console.log(`(grok-4-1-fast — $0.20/$0.50 per M tokens). Run \`xint credits\``);
+  console.log(`(grok-4.3 — $1.25/$2.50 per M tokens). Run \`xint credits\``);
   console.log(`anytime to see your burn rate.`);
   console.log(``);
 
@@ -413,7 +416,7 @@ export async function analyzeImage(
   question?: string,
   opts?: GrokVisionOpts,
 ): Promise<GrokResponse> {
-  const model = opts?.model || DEFAULT_VISION_MODEL;  // grok-4.3 is vision-capable; grok-2-vision retires 2026-05-15
+  const model = opts?.model || DEFAULT_VISION_MODEL;  // grok-4.3 is vision-capable; grok-2-vision retired 2026-05-15
   const apiKey = getXaiKey();
 
   const defaultQuestion = question || "Describe this image in detail. What do you see?";
@@ -459,7 +462,7 @@ export async function analyzeImage(
       throw new Error(`xAI rate limited (429): ${msg}. Try again in a moment.`);
     }
     if (res.status === 400 && msg.includes("vision")) {
-      throw new Error(`xAI vision error (400): ${msg}. Make sure you're using a vision-capable model (grok-2-vision, grok-3).`);
+      throw new Error(`xAI vision error (400): ${msg}. Make sure you're using a vision-capable model (grok-4.3 or grok-4.20).`);
     }
     throw new Error(`xAI API error (${res.status}): ${msg}`);
   }
@@ -541,7 +544,7 @@ export async function cmdAnalyze(args: string[]): Promise<void> {
       case "--model":
         explicitModel = args[++i];
         if (!explicitModel) {
-          console.error("Error: --model requires a value (grok-4.3, grok-4-1-fast, grok-4.20, grok-4.20-reasoning)");
+          console.error("Error: --model requires a value (grok-4.3, grok-4.20, grok-4.20-reasoning, grok-build-0.1)");
           process.exit(1);
         }
         break;
@@ -607,7 +610,7 @@ export async function cmdAnalyze(args: string[]): Promise<void> {
       const question = queryParts.length > 0 ? queryParts.join(" ") : undefined;
       // Image analysis: grok-4.3 is the current vision-capable default.
       // Legacy aliases still accepted but auto-redirect post-2026-05-15.
-      const VISION_CAPABLE = new Set(["grok-4.3", "grok-4.20", "grok-2-vision", "grok-3"]);
+      const VISION_CAPABLE = new Set(["grok-4.3", "grok-4.20", "grok-4.20-reasoning", "grok-4.20-non-reasoning"]);
       const visionModel = VISION_CAPABLE.has(model) ? model : DEFAULT_VISION_MODEL;
       const visionOpts: GrokVisionOpts = { model: visionModel };
       response = await analyzeImage(imageUrl, question, visionOpts);
@@ -711,8 +714,8 @@ Usage: xint analyze <query>           Ask Grok a question
        xint analyze --image <url>     Analyze an image with Grok Vision
 
 Options:
-  --budget <tier>    cheap (default, grok-4-1-fast) | balanced (grok-4.3) | max (grok-4.20-reasoning)
-  --model <name>     Override budget; explicit model name (grok-4.3, grok-4-1-fast, grok-4.20, ...)
+  --budget <tier>    cheap (default, grok-4.3) | balanced (grok-4.20) | max (grok-4.20-reasoning)
+  --model <name>     Override budget; explicit model name (grok-4.3, grok-4.20, ...)
   --tweets <file>    Path to JSON file containing tweets
   --pipe             Read tweet JSON from stdin
   --image, -i <url>  Image URL to analyze with Grok Vision (auto-uses grok-4.3)
@@ -721,7 +724,7 @@ Examples:
   xint analyze "What are the top AI agent frameworks right now?"
   xint analyze --tweets data/search-results.json
   xint search "AI agents" --json | xint analyze --pipe "Which tweets show product launches?"
-  xint analyze --model grok-3 "Deep analysis of crypto market sentiment"
+  xint analyze --model grok-4.20-reasoning "Deep analysis of crypto market sentiment"
   xint analyze --image "https://example.com/chart.png" "What does this chart show?"
 `);
 }

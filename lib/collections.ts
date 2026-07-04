@@ -178,17 +178,18 @@ export async function collectionsAddDocument(
 ): Promise<unknown> {
   const key = getMgmtKey();
 
-  // Management API requires multipart form for this endpoint
-  const proc = Bun.spawn([
-    "curl", "-s",
-    "-X", "POST",
-    `${MGMT_BASE}/collections/${collectionId}/documents`,
-    "-H", `Authorization: Bearer ${key}`,
-    "-F", `document_id=${documentId}`,
-  ], { stdout: "pipe", stderr: "pipe" });
+  // Management API requires multipart form for this endpoint.
+  // Native fetch keeps the bearer key out of the process table (curl argv
+  // is visible to any local user via ps).
+  const form = new FormData();
+  form.append("document_id", documentId);
 
-  const output = await new Response(proc.stdout).text();
-  await proc.exited;
+  const res = await fetch(`${MGMT_BASE}/collections/${collectionId}/documents`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}` },
+    body: form,
+  });
+  const output = await res.text();
 
   if (!output.trim()) {
     throw new Error("Empty response from xAI management API");
@@ -213,19 +214,19 @@ export async function collectionsUploadDocument(
 ): Promise<unknown> {
   const key = getMgmtKey();
 
-  const proc = Bun.spawn([
-    "curl", "-s",
-    "-X", "POST",
-    `${MGMT_BASE}/collections/${collectionId}/documents`,
-    "-H", `Authorization: Bearer ${key}`,
-    "-F", `file=@${filePath}`,
-    "-F", `data=@${filePath}`,
-    "-F", `name=${name}`,
-    "-F", `content_type=${contentType}`,
-  ], { stdout: "pipe", stderr: "pipe" });
+  const form = new FormData();
+  const file = Bun.file(filePath);
+  form.append("file", file);
+  form.append("data", file);
+  form.append("name", name);
+  form.append("content_type", contentType);
 
-  const output = await new Response(proc.stdout).text();
-  await proc.exited;
+  const res = await fetch(`${MGMT_BASE}/collections/${collectionId}/documents`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}` },
+    body: form,
+  });
+  const output = await res.text();
 
   if (!output.trim()) {
     throw new Error("Empty response from xAI management API");
@@ -254,17 +255,16 @@ export async function filesUpload(
 
   const filename = filePath.split("/").pop() || "file";
 
-  const proc = Bun.spawn([
-    "curl", "-s",
-    "-X", "POST",
-    `${API_BASE}/files`,
-    "-H", `Authorization: Bearer ${key}`,
-    "-F", `file=@${filePath};filename=${filename}`,
-    "-F", `purpose=${purpose}`,
-  ], { stdout: "pipe", stderr: "pipe" });
+  const form = new FormData();
+  form.append("file", Bun.file(filePath), filename);
+  form.append("purpose", purpose);
 
-  const output = await new Response(proc.stdout).text();
-  await proc.exited;
+  const res = await fetch(`${API_BASE}/files`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}` },
+    body: form,
+  });
+  const output = await res.text();
 
   if (!output.trim()) {
     throw new Error("Empty response from xAI files API");

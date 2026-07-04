@@ -121,7 +121,7 @@ export async function cmdBookmarkKb(args: string[]): Promise<void> {
 async function subExtract(args: string[]): Promise<void> {
   const limit = parseInt(getFlag(args, "--limit") || "100");
   const batchSize = parseInt(getFlag(args, "--batch-size") || "20");
-  const model = getFlag(args, "--model") || "grok-4-1-fast";
+  const model = getFlag(args, "--model") || "grok-4.3";
   const force = hasFlag(args, "--force");
   const asJson = hasFlag(args, "--json");
 
@@ -530,7 +530,7 @@ Subcommands:
 Extract options:
   --limit <N>            Max bookmarks to fetch (default: 100)
   --batch-size <N>       Tweets per Grok call (default: 20)
-  --model <name>         Grok model (default: grok-4-1-fast)
+  --model <name>         Grok model (default: grok-4.3)
   --force                Re-extract already processed bookmarks
   --json                 Output full KB as JSON
 

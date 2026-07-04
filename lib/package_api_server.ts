@@ -521,15 +521,24 @@ export async function cmdPackageApiServer(argv: string[]): Promise<void> {
         const rawBody = await readRawBody(req);
         const signature = String(req.headers["x-billing-signature"] || "").trim();
 
-        if (secret) {
-          if (!signature) {
-            sendApiError(res, 401, "UNAUTHORIZED", "Missing billing webhook signature.");
-            return;
-          }
-          if (!verifyBillingSignature(rawBody, signature, secret)) {
-            sendApiError(res, 401, "UNAUTHORIZED", "Invalid billing webhook signature.");
-            return;
-          }
+        // No secret configured = webhook disabled. Accepting unsigned billing
+        // events would let any caller grant themselves plan entitlements.
+        if (!secret) {
+          sendApiError(
+            res,
+            401,
+            "UNAUTHORIZED",
+            "Billing webhook disabled: set XINT_BILLING_WEBHOOK_SECRET to enable signed webhook delivery."
+          );
+          return;
+        }
+        if (!signature) {
+          sendApiError(res, 401, "UNAUTHORIZED", "Missing billing webhook signature.");
+          return;
+        }
+        if (!verifyBillingSignature(rawBody, signature, secret)) {
+          sendApiError(res, 401, "UNAUTHORIZED", "Invalid billing webhook signature.");
+          return;
         }
 
         let event: Record<string, unknown>;
@@ -943,8 +952,22 @@ export async function cmdPackageApiServer(argv: string[]): Promise<void> {
     }
   });
 
-  server.listen(port, () => {
-    console.error(`xint package API server running at http://localhost:${port}${API_PREFIX}`);
+  // Bind loopback by default. A non-loopback bind exposes package CRUD,
+  // governance, and billing endpoints to the network, so require an API key
+  // before allowing it (same trust model as the MCP SSE server).
+  const host = process.env.XINT_PACKAGE_API_HOST || "127.0.0.1";
+  const isLoopback = host === "127.0.0.1" || host === "localhost" || host === "::1";
+  const hasApiKey = Boolean(process.env.XINT_PACKAGE_API_KEY || process.env.XINT_PACKAGE_API_KEYS);
+  if (!isLoopback && !hasApiKey) {
+    console.error(
+      `refusing to bind package API server to ${host} without XINT_PACKAGE_API_KEY(S) set — ` +
+        `unauthenticated non-loopback binds expose package, governance, and billing endpoints`
+    );
+    process.exit(1);
+  }
+
+  server.listen(port, host, () => {
+    console.error(`xint package API server running at http://${host}:${port}${API_PREFIX}`);
     console.error(`Store file: ${STORE_PATH}`);
   });
 }
