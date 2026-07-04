@@ -162,7 +162,7 @@ describe("Cost Rates", () => {
   test("COST_RATES has bookmarks rate", () => {
     const { COST_RATES } = require("./costs");
 
-    expect(COST_RATES.bookmarks.per_tweet).toBe(0.005);
+    expect(COST_RATES.bookmarks.per_tweet).toBe(0.001);
   });
 
   test("COST_RATES has xAI/Grok rates", () => {

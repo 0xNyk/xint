@@ -1,7 +1,15 @@
 name: CI
 
+# workflow_dispatch-only until 2026-07: CI never ran on pushes/PRs, which is
+# how a release shipped with modules missing from git (issue #21).
 on:
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   checks:
@@ -24,3 +32,37 @@ jobs:
 
       - name: Test
         run: bun run test
+
+  security-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Block committed .env files
+        run: |
+          if git ls-files | grep -Ex '\.env(\..+)?' | grep -v '^\.env\.example$'; then
+            echo "::error::A .env file is tracked in git — secrets must never be committed."
+            exit 1
+          fi
+          echo "OK: no tracked .env files"
+
+      - name: Block dynamic-eval implant patterns
+        # A fetch-and-eval backdoor was force-pushed to a non-main branch on
+        # 2026-06-21 (commit 58925a9, removed). These patterns have no
+        # legitimate use in this codebase; fail hard if they appear.
+        run: |
+          if grep -rnE '\beval\(|new Function\(|\batob\(' xint.ts lib/ --include='*.ts'; then
+            echo "::error::eval()/new Function()/atob() found — not allowed in this codebase."
+            exit 1
+          fi
+          echo "OK: no implant patterns"
+
+      - name: Block unexpected runtime dependencies
+        run: |
+          UNEXPECTED=$(jq -r '.dependencies // {} | keys[]' package.json | grep -v '^@modelcontextprotocol/sdk$' || true)
+          if [ -n "$UNEXPECTED" ]; then
+            echo "::error::Unexpected runtime dependency: $UNEXPECTED — review for supply-chain risk before allowlisting here."
+            exit 1
+          fi
+          echo "OK: runtime dependencies match allowlist"

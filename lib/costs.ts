@@ -60,8 +60,10 @@ const RETENTION_DAYS = 30;
 export const COST_RATES: Record<string, { per_tweet: number; per_call: number }> = {
   search:          { per_tweet: 0.005, per_call: 0 },
   search_archive:  { per_tweet: 0.01,  per_call: 0 },
-  bookmarks:       { per_tweet: 0.005, per_call: 0 },
-  likes:           { per_tweet: 0.005, per_call: 0 },
+  // "Owned reads" (own bookmarks/likes/posts) dropped to $0.001/resource
+  // in the 2026-04-20 pay-per-use restructure.
+  bookmarks:       { per_tweet: 0.001, per_call: 0 },
+  likes:           { per_tweet: 0.001, per_call: 0 },
   like:            { per_tweet: 0, per_call: 0.01 },
   unlike:          { per_tweet: 0, per_call: 0.01 },
   follow:          { per_tweet: 0, per_call: 0.01 },

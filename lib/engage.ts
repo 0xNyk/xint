@@ -170,7 +170,7 @@ export async function cmdEngage(args: string[]): Promise<void> {
   const execute = hasFlag(args, "--execute");
   const save = hasFlag(args, "--save");
   const json = hasFlag(args, "--json");
-  const model = getFlag(args, "--model") || "grok-4-1-fast";
+  const model = getFlag(args, "--model") || "grok-4.3";
   const noKb = hasFlag(args, "--no-kb");
 
   if (!niche) {
@@ -184,7 +184,7 @@ export async function cmdEngage(args: string[]): Promise<void> {
     console.error("  --execute             Actually post replies (dry-run by default)");
     console.error("  --save                Save plan to data/exports/");
     console.error("  --json                JSON output");
-    console.error("  --model <name>        Grok model (default: grok-4-1-fast)");
+    console.error("  --model <name>        Grok model (default: grok-4.3)");
     console.error("  --no-kb               Skip bookmark-kb lookup");
     console.error("");
     console.error("Examples:");
@@ -211,7 +211,7 @@ export async function cmdEngage(args: string[]): Promise<void> {
       maxResults: Math.max(count * 3, 10),
       fromDate: fromDate ? fromDate.split("T")[0] : undefined,
       timeoutSeconds: 60,
-      model: "grok-4-1-fast",
+      model: "grok-4.3",
     });
 
     // Extract tweet IDs from xSearch results + citations

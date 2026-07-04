@@ -355,7 +355,7 @@ xint article "https://example.com" --ai "Key takeaways?"
 xint article "https://x.com/user/status/123" --ai "Summarize"
 ```
 
-Uses xAI's `grok-4` model. Default analysis model is now `grok-4-1-fast`.
+Uses xAI's `grok-4.3` model (the default for all analysis since the 2026-05-15 model retirement — retired slugs like `grok-4-1-fast` and `grok-3` silently redirect to `grok-4.3` and bill at its rates).
 
 ## Use as AI Agent Skill
 

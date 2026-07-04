@@ -275,13 +275,13 @@ const TOOLS = [
   },
   {
     name: "xint_analyze",
-    description: "Analyze tweets or answer questions using Grok AI. Routes to the cheapest sufficient model by default (--budget cheap = grok-4-1-fast).",
+    description: "Analyze tweets or answer questions using Grok AI. Routes to the cheapest sufficient model by default (--budget cheap = grok-4.3).",
     inputSchema: {
       type: "object",
       properties: {
         query: { type: "string", description: "Question or analysis request" },
         tweets: { type: "array", description: "Array of tweets to analyze (optional)" },
-        model: { type: "string", description: "Explicit Grok model override (grok-4.3, grok-4-1-fast, grok-4.20-reasoning, ...)" },
+        model: { type: "string", description: "Explicit Grok model override (grok-4.3, grok-4.20, grok-4.20-reasoning, ...)" },
         budget: {
           type: "string",
           enum: ["cheap", "balanced", "max"],
