@@ -1,6 +1,7 @@
 # Secrets
 .env
-.env.local
+.env.*
+!.env.example
 
 # OAuth tokens (sensitive)
 data/oauth-tokens.json
@@ -25,6 +26,16 @@ references/monetization-plan.md
 
 # Dependencies
 node_modules/
+dist/
+coverage/
+.nyc_output/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+*.swo
+*~
 
 # OS
 .DS_Store

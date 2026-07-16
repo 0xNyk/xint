@@ -13,7 +13,7 @@
   "bugs": {
     "url": "https://github.com/0xNyk/xint/issues"
   },
-  "description": "X Intelligence CLI \u2014 search, analyze, and engage on X/Twitter from your terminal",
+  "description": "Local-first X Intelligence CLI for search, monitoring, analysis, exports, OAuth actions, and agent tooling",
   "engines": {
     "bun": ">=1.0.0"
   },
