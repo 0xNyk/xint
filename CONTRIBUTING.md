@@ -1,20 +1,27 @@
 # Contributing to xint
 
-Thanks for your interest in contributing!
+Contributions are welcome. Keep changes reviewable and attach evidence that matches their risk.
 
-## Getting Started
+## Getting started
 
 1. Fork and clone the repo
 2. Configure required environment variables locally (see README)
 3. Install [Bun](https://bun.sh) if you haven't already
 4. Run `bun run xint.ts --help` to verify everything works
+5. Run `bun run typecheck` and `bun test` before changing behavior
 
-## Making Changes
+## Making changes
 
-- Keep changes focused — one feature or fix per PR
+- Keep changes focused: one feature or fix per PR
 - Follow the existing code style (TypeScript, no semicolons in new code is fine, match the file you're editing)
-- Test your changes manually with real API calls before submitting
+- Prefer fixtures and local tests. Use real API calls only when the behavior cannot be proven locally, and never include credentials or personal account data in evidence
 - Don't commit local secret/config files or generated runtime data artifacts
+
+## Pull request evidence
+
+Describe the user-visible change, risk, compatibility impact, and commands you ran. Documentation-only changes should pass link and copy checks. Code changes should pass typechecking and the relevant Bun tests.
+
+AI-assisted contributions are accepted under the same contract as other work. The contributor remains responsible for correctness, licensing, security, and understanding every submitted change.
 
 ## Architecture
 
@@ -31,11 +38,12 @@ lib/cache.ts     File-based result cache
 lib/format.ts    Output formatters (terminal + markdown)
 ```
 
-## Reporting Issues
+## Reporting issues
 
 - Include the command you ran and the error output
 - Mention your Bun version (`bun --version`)
 - Don't include API keys or tokens in issue reports
+- Report unpatched vulnerabilities through [SECURITY.md](SECURITY.md), not a public issue
 
 ## Branch Protection
 

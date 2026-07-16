@@ -1,44 +1,55 @@
 <!-- markdownlint-disable MD041 -->
 <p align="center">
-  <img src="assets/hero.png" alt="xint — X Intelligence from your terminal" width="800">
+  <img src="assets/readme/xint-intelligence-cli.jpeg" alt="xint turns terminal queries into searchable, monitorable, analyzable intelligence" width="900">
 </p>
 
 <p align="center">
-  <strong>X Intelligence CLI</strong> — search, monitor, analyze, and engage on X/Twitter from your terminal.
+  <strong>Search, monitor, analyze, and export X data from the terminal.</strong>
 </p>
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
   <a href="https://bun.sh"><img src="https://img.shields.io/badge/Runtime-Bun-f9f1e1.svg" alt="Bun"></a>
   <a href="https://github.com/0xNyk/xint/releases"><img src="https://img.shields.io/github/v/release/0xNyk/xint?display_name=tag" alt="Release"></a>
-  <a href="https://github.com/0xNyk/xint/stargazers"><img src="https://img.shields.io/github/stars/0xNyk/xint" alt="Stars"></a>
-  <a href="https://twitter.com/intent/tweet?text=Check+out+xint:+X+Intelligence+CLI+for+AI+agents+%F0%9F%90%A5%0Ahttps://github.com/0xNyk/xint"><img src="https://img.shields.io/twitter/url?label=Tweet&url=https%3A%2F%2Fgithub.com%2F0xNyk%2Fxint" alt="Tweet"></a>
+  <a href="https://github.com/0xNyk/xint"><img src="https://img.shields.io/github/stars/0xNyk/xint" alt="Stars"></a>
 </p>
 
 ---
 
-> **Search X like a pro.** Full-text search, real-time monitoring, follower tracking, AI sentiment analysis, and structured export — all from CLI.
+`xint` is a local-first TypeScript CLI for X API research and operations. It supports recent and full-archive search, filtered streams, watch loops, account and follower analysis, OAuth actions, Grok-assisted analysis, structured exports, and an MCP interface for agents.
 
-## Why xint?
+It uses official X and xAI APIs. You bring the credentials, choose the scope, and keep cache, snapshots, and reports on your machine by default.
 
-- **For AI Agents** — designed as a [skill](#use-as-an-ai-agent-skill) for Claude Code, OpenClaw, and other coding agents
-- **For Researchers** — OSINT, market intelligence, trend tracking without leaving the terminal
-- **For Developers** — JSONL/CSV export, Unix pipeline integration, MCP server for AI agent tools
-- **Fast** — built on Bun, typed TypeScript, smart caching
+> **Project status:** actively maintained. Latest release: [`2026.7.5`](https://github.com/0xNyk/xint/releases/tag/2026.7.5). Runtime: Bun 1.0+.
 
-Spiritual successor to [twint](https://github.com/twintproject/twint) (archived 2023).
+## What xint is for
+
+| Need | What xint provides |
+|---|---|
+| Research | Search, threads, profiles, trends, reposts, articles, and reports |
+| Monitoring | Watch loops, filtered streams, follower snapshots, and webhooks |
+| Analysis | Local filtering plus optional Grok sentiment and synthesis |
+| Automation | JSON, JSONL, CSV, MCP, shell pipelines, and machine-readable capabilities |
+| Account operations | OAuth-backed bookmarks, likes, follows, lists, blocks, and mutes |
+
+It is a spiritual successor to [twint](https://github.com/twintproject/twint), rebuilt around official APIs instead of scraping.
 
 ## Install
 
+The release installer verifies the source archive against the release checksum. Download it first so you can inspect what will run:
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/0xNyk/xint/main/install.sh | bash
+curl -fsSLo /tmp/xint-install.sh \
+  https://raw.githubusercontent.com/0xNyk/xint/2026.7.5/install.sh
+XINT_INSTALL_VERSION=2026.7.5 bash /tmp/xint-install.sh
 ```
 
-Optional pinned version:
+Install the latest published release instead:
 
 ```bash
-XINT_INSTALL_VERSION=<version-tag> \
-curl -fsSL https://raw.githubusercontent.com/0xNyk/xint/main/install.sh | bash
+curl -fsSLo /tmp/xint-install.sh \
+  https://raw.githubusercontent.com/0xNyk/xint/main/install.sh
+bash /tmp/xint-install.sh
 ```
 
 Homebrew (lightweight prebuilt binary on Apple Silicon):
@@ -62,7 +73,11 @@ cd xint
 bun install
 ```
 
-> **Requires:** [Bun](https://bun.sh) · [X API access](https://developer.x.com) (prepaid credits)
+> **Requires:** [Bun](https://bun.sh) and prepaid [X API access](https://console.x.com).
+
+## From query to intelligence
+
+![xint moves a defined query through search, filtering, analysis, export, and monitoring](assets/readme/query-intelligence-loop.jpeg)
 
 ## Quick Reference
 
@@ -120,12 +135,14 @@ XINT_TUI_THEME_FILE=./tui-theme.tokens.example.json xint tui
 
 ## Setup
 
+![xint keeps X, OAuth, xAI, and local runtime data behind separate access boundaries](assets/readme/access-data-boundaries.jpeg)
+
 ### 1. X API Key
 
 Set a local bearer token in your shell or secret manager (do not commit credentials):
 - `X_BEARER_TOKEN`
 
-Get your bearer token from [developer.x.com](https://developer.x.com) → Your Apps → App Settings.
+Get your bearer token from the [X Developer Console](https://console.x.com) under your app's credentials.
 
 ### 2. Optional: xAI for AI Features
 
@@ -224,7 +241,7 @@ Webhook safety:
 - `http://` is accepted only for localhost/loopback targets
 - Optional host allowlist: `XINT_WEBHOOK_ALLOWED_HOSTS=hooks.example.com,*.internal.example`
 
-Press `Ctrl+C` — shows session stats.
+Press `Ctrl+C` to stop and show session stats.
 
 ## Stream (Official Filtered Stream)
 
@@ -355,7 +372,7 @@ xint article "https://example.com" --ai "Key takeaways?"
 xint article "https://x.com/user/status/123" --ai "Summarize"
 ```
 
-Uses xAI's `grok-4.3` model (the default for all analysis since the 2026-05-15 model retirement — retired slugs like `grok-4-1-fast` and `grok-3` silently redirect to `grok-4.3` and bill at its rates).
+Uses xAI's `grok-4.3` model. Since the 2026-05-15 model retirement, requests using retired slugs such as `grok-4-1-fast` and `grok-3` redirect to `grok-4.3` and use its rates.
 
 ## Use as AI Agent Skill
 
@@ -371,7 +388,7 @@ mkdir -p skills && cd skills
 git clone https://github.com/0xNyk/xint.git
 ```
 
-Then just ask: *"Search X for what people say about React 19"* — the agent reads `SKILL.md` and runs the right command.
+Ask: *"Search X for what people say about React 19."* The agent reads `SKILL.md` and selects the matching command.
 
 ### MCP Server
 
@@ -393,13 +410,11 @@ Security defaults:
 - SSE mode binds to `127.0.0.1` unless `--host` / `XINT_MCP_HOST` is set.
 - If host is non-loopback, auth is required via `--auth-token` or `XINT_MCP_AUTH_TOKEN`.
 
-## Cost
+## Cost awareness
 
-| Operation | Cost |
-|-----------|------|
-| Tweet read | $0.005/tweet |
-| Full-archive | $0.01/tweet |
-| Write action | $0.01/action |
+![xint narrows queries, reuses cache, caps pagination, and tracks a local budget](assets/readme/cost-control.jpeg)
+
+X uses prepaid, operation-specific pricing. `xint` records local estimates and exposes budget controls, but the X Developer Console is authoritative for current rates and billed usage. See the [official X API pricing page](https://docs.x.com/x-api/getting-started/pricing).
 
 ```bash
 xint costs           # Today's spend
@@ -423,7 +438,7 @@ For hosted billing sync, package API also supports:
 - `POST /v1/billing/webhook` (provider-agnostic event ingest)
 - `GET /v1/billing/events?limit=100` (workspace billing event history)
 
-## Configuration Variables (Local Only)
+## Configuration variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
@@ -439,7 +454,7 @@ For hosted billing sync, package API also supports:
 | `XINT_BILLING_WEBHOOK_SECRET` | No | HMAC secret for `/v1/billing/webhook` signature validation |
 | `XINT_BILLING_UPGRADE_URL` | No | Upgrade URL shown in MCP plan/quota errors |
 
-## File Structure
+## File structure
 
 ```
 xint/
@@ -461,16 +476,12 @@ xint/
 
 ## Security
 
-- Tokens from env vars — never hardcoded
+- Tokens come from environment variables and are never hardcoded
 - OAuth tokens stored with `chmod 600`
 - Webhooks: use trusted endpoints only
 - Review agent session logs in untrusted environments
 
-See [SECURITY.md](docs/security.md) for full details.
-
-## Contributing
-
-Open source! See [CONTRIBUTING.md](CONTRIBUTING.md).
+See [SECURITY.md](SECURITY.md) for supported versions and private reporting instructions.
 
 ## Release Automation
 
@@ -512,11 +523,11 @@ Release report:
 - Disable with `--no-report`
 
 
-## Contributing
+## Contributing and support
 
-Contributions welcome. Read the [contribution guidelines](CONTRIBUTING.md) first.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Use [GitHub Issues](https://github.com/0xNyk/xint/issues) for reproducible bugs and scoped feature requests. Security reports belong in the private channel described in [SECURITY.md](SECURITY.md), not in public issues.
 
-## ❤️ Support the Project
+## Support the project
 
 If you find this project useful, consider supporting my open-source work.
 
@@ -533,7 +544,7 @@ If you find this project useful, consider supporting my open-source work.
 
 **Need agent infrastructure, trading systems, or Solana applications built for your team?**
 
-[Builderz](https://builderz.dev) ships production AI systems — 32+ products across 15 countries.
+[Builderz](https://builderz.dev) builds production AI systems, trading infrastructure, and Solana applications.
 
 [Get in touch](https://builderz.dev) | [@nyk_builderz](https://x.com/nyk_builderz)
 
@@ -541,15 +552,4 @@ If you find this project useful, consider supporting my open-source work.
 
 ## License
 
-[![CC0](https://licensebuttons.net/p/zero/1.0/88x31.png)](https://creativecommons.org/publicdomain/zero/1.0/)
-
-To the extent possible under law, the authors have waived all copyright and
-related or neighboring rights to this work.
-
----
-
-<p align="center">
-  <a href="https://star-history.com/#0xNyk/xint&Date">
-    <img src="https://api.star-history.com/svg?repos=0xNyk/xint&type=Date" alt="Star History" width="400">
-  </a>
-</p>
+Licensed under the [MIT License](LICENSE).
