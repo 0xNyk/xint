@@ -529,9 +529,7 @@ Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Use [GitH
 
 ## Support the project
 
-If you find this project useful, consider supporting my open-source work.
-
-[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-orange?logo=buymeacoffee)](https://buymeacoffee.com/nyk_builderz)
+If xint helps your work, [sponsor its continued maintenance](https://github.com/sponsors/0xNyk).
 
 **Solana donations**
 
@@ -546,7 +544,7 @@ If you find this project useful, consider supporting my open-source work.
 
 [Builderz](https://builderz.dev) builds production AI systems, trading infrastructure, and Solana applications.
 
-[Get in touch](https://builderz.dev) | [@nyk_builderz](https://x.com/nyk_builderz)
+[Get in touch](https://builderz.dev) | [Nyk](https://nyk.dev) | [@nykdotdev](https://x.com/nykdotdev)
 
 </div>
 
