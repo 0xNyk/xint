@@ -9,18 +9,30 @@ import { join } from "path";
 export const BASE = "https://api.x.com/2";
 const RATE_DELAY_MS = 350; // stay under 450 req/15min
 
-function getToken(): string {
-  // Try env first
-  if (process.env.X_BEARER_TOKEN) return process.env.X_BEARER_TOKEN;
+// Same hardening as the client id in lib/oauth.ts. The previous pattern was
+// unanchored, so a commented-out or prefixed line (`#X_BEARER_TOKEN=`,
+// `OLD_X_BEARER_TOKEN=`) could win over the real one, and it preserved trailing
+// spaces and the CR from a CRLF file. Either produces a 401 that looks like a
+// revoked token rather than a parsing problem.
+function cleanSecret(raw: string): string {
+  return raw
+    .trim()
+    .replace(/^["']|["']$/g, "")
+    .replace(/[\r\n]+$/, "")
+    .trim();
+}
 
-  // Try .env in project directory
+function getToken(): string {
+  const fromProcess = process.env.X_BEARER_TOKEN;
+  if (fromProcess && fromProcess.trim()) return cleanSecret(fromProcess);
+
   try {
     const envFile = readFileSync(
       join(import.meta.dir, "..", ".env"),
       "utf-8"
     );
-    const match = envFile.match(/X_BEARER_TOKEN=["']?([^"'\n]+)/);
-    if (match) return match[1];
+    const match = envFile.match(/^\s*X_BEARER_TOKEN\s*=\s*(.*)$/m);
+    if (match && match[1].trim()) return cleanSecret(match[1]);
   } catch {}
 
   throw new Error(
@@ -30,6 +42,20 @@ function getToken(): string {
 
 export function getBearerToken(): string {
   return getToken();
+}
+
+// A 401 here is app-only auth, which is a different credential from the OAuth
+// user token. Having just completed `xint auth setup` and still seeing 401 is
+// confusing unless the message says which key is being rejected.
+export function explainBearer401(status: number): string {
+  if (status !== 401) return "";
+  return (
+    "\n\nThis endpoint uses X_BEARER_TOKEN (app-only auth), not your OAuth login.\n" +
+    "  'xint auth status' can look healthy while this still fails — they are\n" +
+    "  separate credentials.\n" +
+    "  Fix: regenerate the Bearer Token under Keys and tokens in the developer\n" +
+    "  console and update X_BEARER_TOKEN. Recreating an app invalidates the old one."
+  );
 }
 
 export async function sleep(ms: number) {
@@ -357,7 +383,7 @@ async function apiGet(url: string): Promise<RawResponse> {
 
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`X API ${res.status}: ${body.slice(0, 200)}`);
+    throw new Error(`X API ${res.status}: ${body.slice(0, 200)}${explainBearer401(res.status)}`);
   }
 
   return res.json();
@@ -441,7 +467,7 @@ export async function oauthGet(url: string, accessToken: string): Promise<RawRes
 
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`X API ${res.status}: ${body.slice(0, 200)}`);
+    throw new Error(`X API ${res.status}: ${body.slice(0, 200)}${explainBearer401(res.status)}`);
   }
 
   return res.json();

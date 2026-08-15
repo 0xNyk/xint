@@ -53,3 +53,6 @@ Thumbs.db
 .continue/
 .cursor/
 .windsurf/
+
+# Downloaded post media (runtime artifacts)
+data/media/

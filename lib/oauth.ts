@@ -16,6 +16,16 @@ const SKILL_DIR = join(import.meta.dir, "..");
 const TOKENS_PATH = join(SKILL_DIR, "data", "oauth-tokens.json");
 const DATA_DIR = join(SKILL_DIR, "data");
 
+// Shared so the localhost and --manual paths explain a state mismatch the same
+// way. The state is regenerated per run, so a mismatch nearly always means a
+// stale link rather than an attack.
+const STATE_MISMATCH_HELP =
+  "State mismatch: this authorization came from a different 'auth setup' run.\n" +
+  "  Each run generates a new state value, so an authorize URL from an earlier\n" +
+  "  attempt will always fail here.\n" +
+  "  Fix: start setup again and open only the URL that run prints.\n" +
+  "  (If you genuinely did not start this authorization, treat it as suspicious.)";
+
 const AUTHORIZE_URL = "https://x.com/i/oauth2/authorize";
 const TOKEN_URL = "https://api.x.com/2/oauth2/token";
 const USERS_ME_URL = "https://api.x.com/2/users/me";
@@ -88,22 +98,74 @@ function saveTokens(tokens: OAuthTokens): void {
 
 // --- Client ID ---
 
-function getClientId(): string {
-  if (process.env.X_CLIENT_ID) return process.env.X_CLIENT_ID;
+// X client IDs are base64url. Anything else in the string — a stray quote, a
+// trailing space from a paste, a CR from a CRLF .env — is sent verbatim and X
+// answers `invalid_client: Value passed for the client id was invalid`, which
+// reads like the app is broken rather than like the value has whitespace on it.
+const CLIENT_ID_SHAPE = /^[A-Za-z0-9_-]+$/;
 
-  // Try .env in project directory
+function cleanClientId(raw: string): string {
+  return raw
+    .trim()
+    .replace(/^["']|["']$/g, "")   // quotes that came along from the .env line
+    .replace(/[\r\n]+$/, "")        // CRLF endings
+    .trim();
+}
+
+export interface ClientIdInfo {
+  clientId: string;
+  source: ".env" | "environment" | "environment (shadowing .env)";
+  wasCleaned: boolean;
+}
+
+function clientIdFromDotEnv(): string | null {
   try {
-    const envFile = readFileSync(
-      join(SKILL_DIR, ".env"),
-      "utf-8"
-    );
-    const match = envFile.match(/X_CLIENT_ID=["']?([^"'\n]+)/);
-    if (match) return match[1];
+    const envFile = readFileSync(join(SKILL_DIR, ".env"), "utf-8");
+    // Capture to end of line, then clean — matching up to a quote leaves
+    // trailing spaces and CR in the value.
+    const match = envFile.match(/^\s*X_CLIENT_ID\s*=\s*(.*)$/m);
+    if (match && match[1].trim()) return cleanClientId(match[1]);
   } catch {}
+  return null;
+}
+
+export function resolveClientId(): ClientIdInfo {
+  const fromProcess = process.env.X_CLIENT_ID;
+  const fromFile = clientIdFromDotEnv();
+
+  if (fromProcess && fromProcess.trim()) {
+    const clientId = cleanClientId(fromProcess);
+    const wasCleaned = clientId !== fromProcess;
+
+    // Bun loads .env into process.env automatically, so "came from
+    // process.env" does NOT mean "someone exported it". Comparing the two is
+    // the only way to tell an auto-loaded .env from a shell export that is
+    // silently overriding it — and the shadowing case is the one that makes a
+    // machine fail while another with the same .env works.
+    if (fromFile === null) return { clientId, source: "environment", wasCleaned };
+    if (fromFile === clientId) return { clientId, source: ".env", wasCleaned };
+    return { clientId, source: "environment (shadowing .env)", wasCleaned };
+  }
+
+  if (fromFile) return { clientId: fromFile, source: ".env", wasCleaned: false };
 
   throw new Error(
     "X_CLIENT_ID not found. Set it in your environment or in .env"
   );
+}
+
+function getClientId(): string {
+  const { clientId, source } = resolveClientId();
+
+  if (!CLIENT_ID_SHAPE.test(clientId)) {
+    throw new Error(
+      `X_CLIENT_ID from ${source} is not a valid client id.\n` +
+        `  It contains characters outside base64url, which X rejects as invalid_client.\n` +
+        `  Length: ${clientId.length}. Check for quotes, spaces, or a CRLF line ending.`
+    );
+  }
+
+  return clientId;
 }
 
 // --- Token Exchange ---
@@ -129,10 +191,33 @@ async function exchangeCode(
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Token exchange failed (${res.status}): ${text}`);
+    throw new Error(`Token exchange failed (${res.status}): ${text}${explainOAuthError(text)}`);
   }
 
   return res.json();
+}
+
+// X's OAuth errors name the parameter but not the cause. `invalid_client` in
+// particular reads like the app is broken, when it usually means the client id
+// does not match any app — stale after the app was recreated, or copied from a
+// host that was configured against a different one.
+export function explainOAuthError(body: string): string {
+  if (!body.includes("invalid_client")) return "";
+
+  let fingerprint = "unknown";
+  try {
+    fingerprint = clientIdFingerprint(resolveClientId().clientId);
+  } catch {}
+
+  return (
+    "\n\nX does not recognise this client id.\n" +
+    `  Using: ${fingerprint}\n` +
+    "  Check X_CLIENT_ID against Keys and tokens -> OAuth 2.0 Client ID in the\n" +
+    "  developer console. If the app was recreated, the id changed.\n" +
+    "  Also confirm Type of App is 'Native App' — a confidential client would\n" +
+    "  require a secret, which this PKCE flow does not send.\n" +
+    "  Run 'xint auth status' to see which source the id is being read from."
+  );
 }
 
 async function fetchUserMe(accessToken: string): Promise<{ id: string; username: string }> {
@@ -173,9 +258,13 @@ export async function refreshTokens(tokens?: OAuthTokens | null): Promise<OAuthT
 
   if (!res.ok) {
     const text = await res.text();
+    // Don't send people to 'auth setup' on invalid_client — setup will fail the
+    // same way, because the client id is the thing that is wrong.
     throw new Error(
-      `Token refresh failed (${res.status}): ${text}\n` +
-      "You may need to re-run 'auth setup' if the refresh token expired."
+      `Token refresh failed (${res.status}): ${text}` +
+      (text.includes("invalid_client")
+        ? explainOAuthError(text)
+        : "\nYou may need to re-run 'auth setup' if the refresh token expired.")
     );
   }
 
@@ -262,16 +351,29 @@ export async function authSetup(manual: boolean = false): Promise<void> {
   let code: string;
 
   if (manual) {
-    // Manual mode: user pastes the redirect URL
-    console.error("   Paste the full redirect URL here:\n");
+    // Manual mode: nothing listens on 3333, so the browser will fail to load
+    // the redirect. That failure is the expected outcome — the authorization
+    // code is in the address bar regardless. Saying so up front stops people
+    // reporting the connection error as the bug.
+    console.error("   After authorizing, the browser will show a connection error");
+    console.error("   for 127.0.0.1:3333 — that is expected, nothing is listening.");
+    console.error("   Copy the FULL URL from the address bar (it contains code=).\n");
     const redirectUrl = await prompt("Redirect URL> ");
 
-    const url = new URL(redirectUrl);
+    let url: URL;
+    try {
+      url = new URL(redirectUrl.trim());
+    } catch {
+      throw new Error(
+        "That does not look like a URL. Paste the whole address bar contents,\n" +
+        "  starting with http://127.0.0.1:3333/callback?code=..."
+      );
+    }
     const returnedState = url.searchParams.get("state");
     code = url.searchParams.get("code") || "";
 
     if (returnedState !== state) {
-      throw new Error("State mismatch — possible CSRF attack. Aborting.");
+      throw new Error(STATE_MISMATCH_HELP);
     }
     if (!code) {
       const error = url.searchParams.get("error");
@@ -353,9 +455,16 @@ async function waitForCallback(expectedState: string): Promise<string> {
         }
 
         if (returnedState !== expectedState) {
-          reject(new Error("State mismatch — possible CSRF attack."));
+          // Far and away the usual cause is a stale authorize URL: each run
+          // mints a new state, so opening the link from an earlier attempt
+          // lands here. Say that first — leading with "CSRF attack" sends
+          // people looking for a security incident that isn't happening.
+          reject(new Error(STATE_MISMATCH_HELP));
           return new Response(
-            "<html><body><h2>Error: State Mismatch</h2><p>Possible CSRF attack. Please try again.</p></body></html>",
+            "<html><body><h2>Stale authorization link</h2>" +
+              "<p>This link came from an earlier <code>auth setup</code> run. " +
+              "Start setup again and open only the URL it prints.</p>" +
+              "<p>You can close this tab.</p></body></html>",
             { headers: { "Content-Type": "text/html" } }
           );
         }
@@ -383,7 +492,42 @@ async function waitForCallback(expectedState: string): Promise<string> {
 
 // --- Auth Status ---
 
+// Fingerprint rather than the value: enough to compare two machines, not enough
+// to paste a credential into a chat window or an issue.
+function clientIdFingerprint(clientId: string): string {
+  const hash = createHash("sha256").update(clientId).digest("hex").slice(0, 12);
+  const head = clientId.slice(0, 6);
+  const tail = clientId.slice(-4);
+  return `${head}…${tail}  len=${clientId.length}  sha256:${hash}`;
+}
+
+// Prints where the client id came from and what it looks like, without printing
+// it. Run this on both machines and compare the fingerprints: if they differ,
+// the two are not using the same app, which is the usual reason one host
+// authorizes and another gets invalid_client.
+export function clientIdStatus(): void {
+  try {
+    const info = resolveClientId();
+    console.log(`Client ID: ${clientIdFingerprint(info.clientId)}`);
+    console.log(`   Source: ${info.source}`);
+    if (info.source === "environment (shadowing .env)") {
+      console.log("   ⚠️  An exported X_CLIENT_ID is overriding a DIFFERENT value in .env.");
+      console.log("       Unset it in your shell profile to use .env instead.");
+    }
+    if (info.wasCleaned) {
+      console.log("   Fixed:  stray quotes/whitespace were trimmed from this value");
+    }
+    if (!/^[A-Za-z0-9_-]+$/.test(info.clientId)) {
+      console.log("   ⚠️  Not valid base64url — X will reject this as invalid_client");
+    }
+  } catch (e) {
+    console.log(`Client ID: ❌ ${(e as Error).message}`);
+  }
+}
+
 export function authStatus(): void {
+  clientIdStatus();
+
   const tokens = loadTokens();
 
   if (!tokens) {
