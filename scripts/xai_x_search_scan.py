@@ -243,7 +243,7 @@ def render_md(
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--workspace", required=True, help="Workspace root (e.g. /home/openclaw/.openclaw/workspace-jarv)")
+    ap.add_argument("--workspace", required=True, help="Workspace root (e.g. ~/.openclaw/workspace-<name>)")
     ap.add_argument("--queries-file", required=True, help="JSON file with {queries:[...]} or array of strings")
     ap.add_argument("--out-md", required=True, help="Path to write markdown report")
     ap.add_argument("--out-json", required=True, help="Path to write raw JSON payload")
