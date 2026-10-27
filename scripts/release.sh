@@ -22,6 +22,14 @@ AUTO_NOTES=true
 GENERATE_REPORT=true
 UPLOAD_REPORT_ASSET=true
 EMBED_REPORT_BODY=true
+VERIFY_XINT_RS_ATTESTATION=true
+
+# xint-rs binaries are built, checksummed, and attested by the xint-rs
+# release workflow; this script only waits for it and reads SHA256SUMS.
+XINT_RS_RELEASE_WORKFLOW="release.yml"
+XINT_RS_RELEASE_TIMEOUT="${XINT_RS_RELEASE_TIMEOUT:-3600}"
+XINT_RS_RELEASE_POLL="${XINT_RS_RELEASE_POLL:-20}"
+XINT_RS_BINARY_SHA=""
 
 VERSION=""
 GENERATED_REPORT_FILE=""
@@ -54,6 +62,7 @@ Options:
   --clawdhub-cloud Enable ClawdHub publishing for xint-cloud (disabled by default)
   --skillsh        Enable skills.sh publishing
   --no-homebrew    Disable Homebrew tap formula update/publish
+  --no-attestation-check  Do not verify the xint-rs SHA256SUMS attestation before the Homebrew update
   --docs           Update README/changelog files when present
   --all            Enable --ai-skill and --docs
   --no-auto-notes  Disable GitHub auto-generated release notes
@@ -77,6 +86,8 @@ Environment variables:
   REPO_PATH_XINT_RS
   REPO_PATH_XINT_CLOUD
   REPO_PATH_HOMEBREW
+  XINT_RS_RELEASE_TIMEOUT   seconds to wait for the xint-rs release workflow (default 3600)
+  XINT_RS_RELEASE_POLL      poll interval in seconds (default 20)
 USAGE
 }
 
@@ -663,7 +674,7 @@ sha256_for_url() {
   local tmp
   tmp="$(mktemp)"
 
-  if ! curl -fsSL "$url" -o "$tmp"; then
+  if ! curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL "$url" -o "$tmp"; then
     rm -f "$tmp"
     return 1
   fi
@@ -716,20 +727,102 @@ url_exists() {
   curl -fsSI "$url" >/dev/null 2>&1
 }
 
-verify_homebrew_release_assets() {
-  local binary_url="$1"
-  local source_url="$2"
-  local release_page="https://github.com/$GITHUB_ORG/$REPO_NAME_ALT/releases/tag/$VERSION"
-
-  if ! url_exists "$binary_url"; then
-    die "Missing Homebrew binary artifact: $binary_url
-Upload xint-rs-macos-arm64-$VERSION.tar.gz to $release_page before running Homebrew publish."
-  fi
+verify_homebrew_source_archive() {
+  local source_url="$1"
 
   if ! url_exists "$source_url"; then
     die "Missing Homebrew source artifact: $source_url
 Ensure tag $VERSION exists and the source archive is available before Homebrew publish."
   fi
+}
+
+xint_rs_macos_asset() {
+  printf 'xint-rs-macos-arm64-%s.tar.gz' "$VERSION"
+}
+
+# Wait for the xint-rs release workflow run for tag $VERSION (built from the
+# tag commit) to finish, and require success.
+wait_for_xint_rs_release_workflow() {
+  local repo_slug="$GITHUB_ORG/$REPO_NAME_ALT"
+  local tag_sha run_id="" status="" conclusion="" deadline
+
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "Would wait up to ${XINT_RS_RELEASE_TIMEOUT}s for $repo_slug $XINT_RS_RELEASE_WORKFLOW on tag $VERSION to succeed"
+    return
+  fi
+
+  [[ "$XINT_RS_RELEASE_TIMEOUT" =~ ^[0-9]+$ && "$XINT_RS_RELEASE_POLL" =~ ^[0-9]+$ ]] \
+    || die "XINT_RS_RELEASE_TIMEOUT and XINT_RS_RELEASE_POLL must be whole seconds"
+  tag_sha="$(gh api "repos/$repo_slug/commits/$VERSION" --jq '.sha')" \
+    || die "Could not resolve tag $VERSION in $repo_slug"
+  deadline=$(( $(date +%s) + XINT_RS_RELEASE_TIMEOUT ))
+  log "Waiting for $repo_slug $XINT_RS_RELEASE_WORKFLOW on $VERSION (${tag_sha:0:12})"
+
+  while :; do
+    if [[ -z "$run_id" ]]; then
+      run_id="$(gh run list --repo "$repo_slug" --workflow "$XINT_RS_RELEASE_WORKFLOW" \
+        --event push --branch "$VERSION" --limit 10 --json databaseId,headSha \
+        --jq "map(select(.headSha == \"$tag_sha\")) | first | .databaseId // empty" 2>/dev/null || true)"
+      [[ -z "$run_id" ]] || log "Found xint-rs release run $run_id"
+    fi
+    if [[ -n "$run_id" ]]; then
+      status=""
+      conclusion=""
+      read -r status conclusion < <(gh run view "$run_id" --repo "$repo_slug" \
+        --json status,conclusion --jq '"\(.status) \(.conclusion)"' 2>/dev/null) || true
+      if [[ "$status" == "completed" ]]; then
+        [[ "$conclusion" == "success" ]] \
+          || die "xint-rs release run $run_id finished with '$conclusion': https://github.com/$repo_slug/actions/runs/$run_id"
+        log "xint-rs release run $run_id succeeded"
+        return
+      fi
+    fi
+    if (( $(date +%s) >= deadline )); then
+      die "Timed out after ${XINT_RS_RELEASE_TIMEOUT}s waiting for the xint-rs release workflow on $VERSION${run_id:+ (run $run_id)}"
+    fi
+    sleep "$XINT_RS_RELEASE_POLL"
+  done
+}
+
+# Read the macOS arm64 digest from the workflow-published SHA256SUMS (after
+# verifying that file's build attestation) into XINT_RS_BINARY_SHA.
+fetch_xint_rs_macos_digest() {
+  local repo_slug="$GITHUB_ORG/$REPO_NAME_ALT"
+  local asset tmp listed
+  asset="$(xint_rs_macos_asset)"
+
+  if [[ "$DRY_RUN" == "true" ]]; then
+    log "Would download SHA256SUMS from $repo_slug release $VERSION and read the digest for $asset"
+    if [[ "$VERIFY_XINT_RS_ATTESTATION" == "true" ]]; then
+      log "Would verify the SHA256SUMS attestation (signer $repo_slug/.github/workflows/$XINT_RS_RELEASE_WORKFLOW, ref refs/tags/$VERSION)"
+    fi
+    XINT_RS_BINARY_SHA="<dry-run-binary-sha256>"
+    return
+  fi
+
+  tmp="$(mktemp -d)"
+  if ! gh release download "$VERSION" --repo "$repo_slug" --pattern SHA256SUMS --dir "$tmp"; then
+    rm -rf "$tmp"
+    die "Could not download SHA256SUMS from $repo_slug release $VERSION"
+  fi
+
+  if [[ "$VERIFY_XINT_RS_ATTESTATION" == "true" ]]; then
+    if ! gh attestation verify "$tmp/SHA256SUMS" \
+      --repo "$repo_slug" \
+      --signer-workflow "$repo_slug/.github/workflows/$XINT_RS_RELEASE_WORKFLOW" \
+      --source-ref "refs/tags/$VERSION" \
+      --deny-self-hosted-runners >/dev/null; then
+      rm -rf "$tmp"
+      die "Attestation verification failed for $repo_slug $VERSION SHA256SUMS"
+    fi
+    log "Verified SHA256SUMS attestation for $repo_slug $VERSION"
+  fi
+
+  listed="$(awk -v name="$asset" '($2 == name || $2 == "*" name) { print tolower($1); exit }' "$tmp/SHA256SUMS")"
+  rm -rf "$tmp"
+  [[ "$listed" =~ ^[0-9a-f]{64}$ ]] || die "SHA256SUMS for $VERSION has no valid entry for $asset"
+  XINT_RS_BINARY_SHA="$listed"
+  log "xint-rs macOS arm64 digest: $XINT_RS_BINARY_SHA"
 }
 
 publish_homebrew_tap() {
@@ -767,17 +860,18 @@ publish_homebrew_tap() {
   binary_url="https://github.com/$GITHUB_ORG/$REPO_NAME_ALT/releases/download/$VERSION/xint-rs-macos-arm64-$VERSION.tar.gz"
   source_url="https://github.com/$GITHUB_ORG/$REPO_NAME_ALT/archive/refs/tags/$VERSION.tar.gz"
 
+  [[ -n "$XINT_RS_BINARY_SHA" ]] || die "xint-rs macOS digest missing; fetch_xint_rs_macos_digest must run first"
+  binary_sha="$XINT_RS_BINARY_SHA"
+  log "Homebrew binary: $binary_url (sha256 from xint-rs SHA256SUMS)"
+
   if [[ "$DRY_RUN" == "true" ]]; then
     log "Would compute Homebrew SHA256 for:"
-    log "- $binary_url"
     log "- $source_url"
-    binary_sha="<dry-run-binary-sha256>"
     source_sha="<dry-run-source-sha256>"
   else
-    log "Verifying required Homebrew release assets exist"
-    verify_homebrew_release_assets "$binary_url" "$source_url"
-    log "Computing Homebrew SHA256 for release artifacts"
-    binary_sha="$(sha256_for_url "$binary_url")" || die "Failed to download/hash binary artifact: $binary_url"
+    log "Verifying Homebrew source archive exists"
+    verify_homebrew_source_archive "$source_url"
+    log "Computing Homebrew SHA256 for the source archive"
     source_sha="$(sha256_for_url "$source_url")" || die "Failed to download/hash source artifact: $source_url"
   fi
 
@@ -1077,6 +1171,9 @@ while [[ $# -gt 0 ]]; do
     --no-homebrew)
       PUBLISH_HOMEBREW=false
       ;;
+    --no-attestation-check)
+      VERIFY_XINT_RS_ATTESTATION=false
+      ;;
     --docs)
       UPDATE_DOCS=true
       ;;
@@ -1295,12 +1392,15 @@ if [[ -n "$REPO_NAME_CLOUD" ]]; then
   verify_github_release_exists "$REPO_NAME_CLOUD"
 fi
 
-# ── Early Homebrew asset gate: fail before touching the tap repo ──
-if [[ "$PUBLISH_HOMEBREW" == "true" && "$DRY_RUN" != "true" ]]; then
-  _hb_binary_url="https://github.com/$GITHUB_ORG/$REPO_NAME_ALT/releases/download/$VERSION/xint-rs-macos-arm64-$VERSION.tar.gz"
-  _hb_source_url="https://github.com/$GITHUB_ORG/$REPO_NAME_ALT/archive/refs/tags/$VERSION.tar.gz"
-  log "Verifying Homebrew release assets exist before tap update"
-  verify_homebrew_release_assets "$_hb_binary_url" "$_hb_source_url"
+# ── Homebrew gate: the xint-rs workflow must publish attested binaries first ──
+if [[ "$PUBLISH_HOMEBREW" == "true" && -n "$REPO_NAME_ALT" ]] && homebrew_repo_exists; then
+  wait_for_xint_rs_release_workflow
+  fetch_xint_rs_macos_digest
+  if [[ "$DRY_RUN" != "true" ]]; then
+    _hb_source_url="https://github.com/$GITHUB_ORG/$REPO_NAME_ALT/archive/refs/tags/$VERSION.tar.gz"
+    log "Verifying Homebrew source archive exists before tap update"
+    verify_homebrew_source_archive "$_hb_source_url"
+  fi
 fi
 
 log "Publishing Homebrew tap formulas"
